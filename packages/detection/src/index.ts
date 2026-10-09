@@ -101,6 +101,11 @@ export {
   builtinRulesFor,
 } from './packs/agent-preflight.js';
 export {
+  relayRules,
+  RELAY_REVOKED_RULE_ID,
+  RELAY_GAP_RULE_ID,
+} from './packs/relay.js';
+export {
   replayRule,
   type ReplayReport,
   type ReplayOptions,
