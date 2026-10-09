@@ -11,8 +11,7 @@ import { VigilCore } from '../service.js';
 import { RelayTokenStore } from './secrets.js';
 import { loadRelayCursor, saveRelayCursor } from './settings.js';
 import { RelayService, type RelayEngineFactory, type RelayEngineLike } from './service.js';
-import type { ShipperStatus } from './engine.js';
-import type { Cursor } from './wire.js';
+import type { ShipperStatus } from '@vigil/shipper';
 
 const TOKEN = 'dev-token-0123456789abcdef';
 
@@ -31,14 +30,10 @@ type EngineWiring = Parameters<RelayEngineFactory>[0];
 class FakeEngine implements RelayEngineLike {
   started = 0;
   stopped = 0;
-  resumedWith: Cursor | undefined;
   wiring: EngineWiring;
-  state: ShipperStatus = { state: 'running', lagRecords: 0 };
+  state: ShipperStatus = { state: 'running', lagRecords: 0, gaps: [] };
   constructor(wiring: EngineWiring) {
     this.wiring = wiring;
-  }
-  resume(cursor: Cursor | undefined): void {
-    this.resumedWith = cursor;
   }
   start(): void {
     this.started++;
@@ -114,6 +109,8 @@ describe('relay service lifecycle', () => {
       endpointUrl: 'https://relay.example.com',
       deviceId: 'device-1234',
     });
+    // A fresh start has no saved position: the engine begins at the stream's origin.
+    expect(engines[0]?.wiring.cursor).toBeUndefined();
     // The engine reads the token live through the getter, never a copy.
     expect(engines[0]?.wiring.token()).toBe(TOKEN);
     expect(tokens.canSave()).toBe(true);
@@ -142,11 +139,18 @@ describe('relay service lifecycle', () => {
     saveRelayCursor(store, { ts: 100, id: 'e1' });
     relay.setToken(TOKEN);
     relay.setConfig(READY);
-    expect(engines[0]?.resumedWith).toEqual({ ts: 100, id: 'e1' });
+    // The cursor reaches the engine through its construction, not a resume call.
+    expect(engines[0]?.wiring.cursor).toEqual({ ts: 100, id: 'e1' });
 
     const eng = engines[0];
     if (!eng) throw new Error('engine missing');
-    eng.state = { state: 'running', lagRecords: 0, lastAck: { ts: 200, id: 'e2' } };
+    eng.state = {
+      state: 'running',
+      lagRecords: 0,
+      lastAck: { ts: 200, id: 'e2' },
+      lastAckAt: 1234,
+      gaps: [],
+    };
     relay.watch();
     expect(loadRelayCursor(store)).toEqual({ ts: 200, id: 'e2' });
   });
@@ -157,7 +161,7 @@ describe('relay service lifecycle', () => {
     relay.setConfig(READY);
     const eng = engines[0];
     if (!eng) throw new Error('engine missing');
-    eng.state = { state: 'revoked', lagRecords: 0 };
+    eng.state = { state: 'error', lagRecords: 0, gaps: [], halted: { kind: 'revoked' } };
     relay.watch();
     await settle();
     const alerts = store.listAlerts();
@@ -185,7 +189,11 @@ describe('relay service lifecycle', () => {
     relay.setConfig(READY);
     const eng = engines[0];
     if (!eng) throw new Error('engine missing');
-    eng.state = { state: 'gap', lagRecords: 0, gapFromTs: 5 };
+    eng.state = {
+      state: 'gap',
+      lagRecords: 0,
+      gaps: [{ from: { ts: 0, id: 'e0' }, to: { ts: 5, id: 'e5' }, at: 9 }],
+    };
     core.detector?.engine._setMode('relay-gap', 'disabled');
     relay.watch();
     await settle();

@@ -1,13 +1,18 @@
 import { EventEmitter } from 'node:events';
-import { newId, type SensorEvent } from '@vigil/core';
+import { newId, type Cursor, type SensorEvent } from '@vigil/core';
 import { RELAY_GAP_RULE_ID, RELAY_REVOKED_RULE_ID } from '@vigil/detection';
 import { localNames, redactValue } from '@vigil/ai/redact';
+import {
+  HttpShipperTransport,
+  RelayShipper,
+  type ShipperState,
+  type ShipperStatus,
+} from '@vigil/shipper';
 import { z } from 'zod';
 import { RelayConfig, type RelayConfigPatch, type RelayView } from '../../shared/ipc.js';
 import type { Store } from '../db/store.js';
 import { coreRule, type Detector } from '../detection.js';
 import type { AlertService } from '../alerts.js';
-import { RelayShipper, type ShipperState, type ShipperStatus } from './engine.js';
 import {
   KEY_RELAY,
   loadRelayConfig,
@@ -15,10 +20,8 @@ import {
   readyToShip,
   saveRelayCursor,
 } from './settings.js';
-import { createIngestTransport } from './transport.js';
 import { DesktopRelaySource } from './store-adapter.js';
 import type { RelayTokenStore } from './secrets.js';
-import type { Cursor } from './wire.js';
 
 /**
  * The telemetry relay's lifecycle: config and token in, an engine running or
@@ -33,10 +36,8 @@ export const RELAY_WATCH_MS = 5_000;
 /** The same once-an-hour limiter the socket-tamper alert uses. */
 const RELAY_ALERT_EVERY_MS = 60 * 60_000;
 
-/** What the service needs of a shipper engine, no more — the stand-in and the real package both fit. */
+/** What the service needs of a shipper engine, no more — `@vigil/shipper`'s RelayShipper fits. */
 export interface RelayEngineLike {
-  /** Resume from the persisted cursor. Only call before start(). */
-  resume(cursor: Cursor | undefined): void;
   start(): void;
   stop(): void;
   status(): ShipperStatus;
@@ -45,6 +46,8 @@ export interface RelayEngineLike {
 export type RelayEngineFactory = (wiring: {
   config: { endpointUrl: string; deviceId: string };
   token: () => string | undefined;
+  /** The last-acked position to resume from, or undefined to start at the stream's beginning. */
+  cursor: Cursor | undefined;
 }) => RelayEngineLike;
 
 export interface RelayServiceDeps {
@@ -72,8 +75,8 @@ export class RelayService extends EventEmitter {
 
   private engine: RelayEngineLike | undefined;
   private watcher: ReturnType<typeof setInterval> | undefined;
-  private savedAck: Cursor | undefined;
-  private lastState: ShipperState | 'off' | undefined;
+  private savedAckAt: number | undefined;
+  private lastState: ShipperState | 'off' | 'revoked' | undefined;
   private revokedAlertAt = 0;
   private gapAlertAt = 0;
 
@@ -90,15 +93,16 @@ export class RelayService extends EventEmitter {
       deps.makeEngine ??
       ((wiring) =>
         new RelayShipper({
+          deviceId: wiring.config.deviceId,
           store: new DesktopRelaySource(this.store),
-          transport: createIngestTransport({
-            endpointUrl: wiring.config.endpointUrl,
+          transport: new HttpShipperTransport({
+            // The relay's ingest route (apps/relay's INGEST_PATH).
+            endpoint: `${wiring.config.endpointUrl}/v1/ingest`,
             token: wiring.token,
-            deviceId: wiring.config.deviceId,
           }),
           // The same redaction pass Vigil's own AI gets.
           redact: (b) => redactValue(b, localNames()),
-          deviceId: wiring.config.deviceId,
+          ...(wiring.cursor ? { cursor: wiring.cursor } : {}),
         }));
   }
 
@@ -162,7 +166,7 @@ export class RelayService extends EventEmitter {
       ready: readyToShip(config, token),
       status: status
         ? {
-            state: status.state,
+            state: this.presentState(status),
             lagRecords: status.lagRecords,
             ...(status.lastAck ? { lastAck: status.lastAck } : {}),
           }
@@ -178,17 +182,19 @@ export class RelayService extends EventEmitter {
   private apply(): void {
     const config = this.config();
     const shouldRun = readyToShip(config, this.tokens.saved());
-    const stale = this.engine?.status().state === 'revoked';
+    // A halted engine (revoked token, rejected batches) is replaced on the
+    // next apply: a fresh one resumes from the persisted cursor.
+    const stale = this.engine?.status().halted !== undefined;
     if (shouldRun && (!this.engine || stale)) {
       this.engine?.stop();
       const engine = this.makeEngine({
         config: { endpointUrl: config.endpointUrl, deviceId: config.deviceId },
         token: () => this.tokens.get() ?? undefined,
+        cursor: this.savedCursorPosition(),
       });
-      engine.resume(loadRelayCursor(this.store));
       engine.start();
       this.engine = engine;
-      this.savedAck = undefined;
+      this.savedAckAt = undefined;
       this.log(`telemetry shipping to ${config.endpointUrl} as ${config.deviceId}`);
     } else if (!shouldRun && this.engine) {
       this.engine.stop();
@@ -198,22 +204,29 @@ export class RelayService extends EventEmitter {
     this.watch();
   }
 
+  /** The persisted acked position, or undefined before the first ack (id ''). */
+  private savedCursorPosition(): Cursor | undefined {
+    const saved = loadRelayCursor(this.store);
+    return saved.id === '' ? undefined : saved;
+  }
+
   /**
    * One poll step: persists acks, surfaces state changes, raises the relay
    * alerts. The interval body — public so tests can step the loop.
    */
   watch(): void {
     const status = this.engine?.status();
-    const state: ShipperState | 'off' = status?.state ?? 'off';
+    const state = this.presentState(status);
     if (state !== this.lastState) {
       this.lastState = state;
       this.emit('changed');
     }
     if (!status) return;
     // The cursor is the only durable state: save each new ack so a crash
-    // resumes where the relay left off.
-    if (status.lastAck && status.lastAck !== this.savedAck) {
-      this.savedAck = status.lastAck;
+    // resumes where the relay left off. lastAckAt stamps each ack, so an
+    // unchanged position is written once.
+    if (status.lastAck && status.lastAckAt !== undefined && status.lastAckAt !== this.savedAckAt) {
+      this.savedAckAt = status.lastAckAt;
       saveRelayCursor(this.store, status.lastAck);
     }
     if (state === 'revoked') {
@@ -222,6 +235,16 @@ export class RelayService extends EventEmitter {
     } else if (state === 'gap') {
       this.raise('relay_gap', status);
     }
+  }
+
+  /**
+   * The state the app sees: the engine's own, with a revoked-token halt
+   * shown as 'revoked' — the one halt the settings surface tells the user
+   * how to fix (save a new device token).
+   */
+  private presentState(status: ShipperStatus | undefined): ShipperState | 'off' | 'revoked' {
+    if (!status) return 'off';
+    return status.halted?.kind === 'revoked' ? 'revoked' : status.state;
   }
 
   /**
@@ -243,6 +266,7 @@ export class RelayService extends EventEmitter {
     if (mode !== 'alert' && mode !== 'block') return;
     if (subtype === 'relay_revoked') this.revokedAlertAt = at;
     else this.gapAlertAt = at;
+    const lastGap = status.gaps.at(-1);
     const event: SensorEvent = {
       id: newId(at),
       ts: at,
@@ -251,9 +275,7 @@ export class RelayService extends EventEmitter {
       subtype,
       details: {
         device: this.config().deviceId,
-        ...(subtype === 'relay_gap' && status.gapFromTs !== undefined
-          ? { gapFromTs: String(status.gapFromTs) }
-          : {}),
+        ...(subtype === 'relay_gap' && lastGap ? { gapFromTs: String(lastGap.from.ts) } : {}),
       },
     };
     void this.alerts

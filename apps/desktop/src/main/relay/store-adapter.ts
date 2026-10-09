@@ -1,47 +1,46 @@
+import type { Cursor } from '@vigil/core';
+import type {
+  RuleSnapshot,
+  ShipperStore,
+  StoredAction,
+  StoredAlert,
+  StoredEvent,
+} from '@vigil/shipper';
 import type { Store } from '../db/store.js';
-import type { ShipperStore } from './engine.js';
-import type { Cursor, ShipRecord } from './wire.js';
 
 /**
- * Reads Vigil's own tables as shipper records — the adapter that plugs the
- * app's store into the engine's ShipperStore seam. Keyset-ordered by (ts, id),
- * so a replay after a crash re-reads exactly the unacked span.
+ * Reads Vigil's own tables the way `@vigil/shipper`'s `ShipperStore` seam
+ * expects. Keyset-ordered by (ts, id), so a replay after a crash re-reads
+ * exactly the unacked span. The engine builds the wire records and redacts
+ * the bodies; this adapter only hands over the stored forms.
  */
 export class DesktopRelaySource implements ShipperStore {
   constructor(private readonly store: Store) {}
 
-  eventsSince(cursor: Cursor | null, limit: number): ShipRecord[] {
-    return this.store
-      .relayEventsSince(cursor ?? { ts: 0, id: '' }, limit)
-      .map((e) => ({ r: 'event' as const, id: e.id, ts: e.ts, body: e.body }));
+  eventsSince(cursor: Cursor, limit: number): Promise<StoredEvent[]> {
+    return Promise.resolve(this.store.relayEventsSince(cursor, limit));
   }
 
-  alertsSince(cursor: Cursor | null, limit: number): ShipRecord[] {
-    return this.store
-      .relayAlertsSince(cursor ?? { ts: 0, id: '' }, limit)
-      .map((a) => ({ r: 'alert' as const, id: a.id, ts: a.ts, body: a.body }));
+  alertsSince(cursor: Cursor, limit: number): Promise<StoredAlert[]> {
+    return Promise.resolve(this.store.relayAlertsSince(cursor, limit));
   }
 
-  actionsSince(cursor: Cursor | null, limit: number): ShipRecord[] {
-    return this.store
-      .relayActionsSince(cursor ?? { ts: 0, id: '' }, limit)
-      .map((a) => ({ r: 'action' as const, id: a.id, ts: a.ts, body: a.body }));
+  actionsSince(cursor: Cursor, limit: number): Promise<StoredAction[]> {
+    return Promise.resolve(this.store.relayActionsSince(cursor, limit));
   }
 
-  rulesIfChanged(version: number | null): ShipRecord[] {
-    const snapshot = this.store.relayRulesIfChanged(version);
-    if (!snapshot) return [];
-    const ts = snapshot.rules.reduce((m, r) => Math.max(m, r.updatedAt), 0);
-    return snapshot.rules.map((rule) => ({
-      r: 'rule' as const,
-      id: rule.id,
-      ts,
+  rulesIfChanged(shippedVersion: number | undefined): Promise<RuleSnapshot | undefined> {
+    const snapshot = this.store.relayRulesIfChanged(shippedVersion ?? null);
+    if (!snapshot) return Promise.resolve(undefined);
+    // One snapshot per device: a stable id, the moving version on the envelope.
+    return Promise.resolve({
+      id: 'rules',
       version: snapshot.version,
-      body: rule,
-    }));
+      body: { rules: snapshot.rules },
+    });
   }
 
-  oldestEvent(): Cursor | null {
-    return this.store.relayOldestEvent();
+  oldestEvent(): Promise<Cursor | undefined> {
+    return Promise.resolve(this.store.relayOldestEvent() ?? undefined);
   }
 }
