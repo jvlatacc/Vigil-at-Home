@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import type { UpdateView } from '../shared/updates.js';
+import { MINISIG_NAME, SUMS_NAME, verifySumsSignature } from './release-signing.js';
 
 /** Where releases are published. Only published releases are visible; drafts never are. */
 export function releasesUrl(repo: string): string {
@@ -33,6 +34,7 @@ const Release = z.object({
     .default([]),
 });
 const Releases = z.array(z.unknown());
+type ReleaseAssets = z.infer<typeof Release>['assets'];
 
 const Saved = z.object({
   auto: z.boolean().default(true),
@@ -58,6 +60,8 @@ export interface UpdateOptions {
   load: () => unknown;
   save: (s: Saved) => void;
   fetch?: typeof fetch;
+  /** The release signing key to verify against; defaults to the committed RELEASE_SIGNING_PUBLIC_KEY. */
+  signingPublicKey?: string;
   openExternal: (url: string) => Promise<void>;
   /** Told once per version when a newer release turns up. */
   onFound?: (version: string) => void;
@@ -129,14 +133,35 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
         signal: AbortSignal.timeout(20_000),
       });
       if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
-      this.available = newest(
+      const found = newestRelease(
         Releases.parse(await res.json()),
         this.o.current,
         this.o.arch,
         repo,
         this.o.platform,
       );
-      this.error = undefined;
+      if (!found) {
+        this.available = undefined;
+        this.error = undefined;
+      } else {
+        // REL-01: nothing is offered before its checksums verify. Unsigned
+        // releases stay fail-open, logged, until the signing key ships.
+        const verdict = await this.verifyAssets(found.assets);
+        if (verdict.outcome === 'refused') {
+          console.warn(`[updates] ${verdict.reason}`);
+          this.available = undefined;
+          this.error = verdict.reason;
+        } else {
+          if (verdict.outcome === 'unsigned') {
+            console.warn(
+              `[updates] ${found.available.version} has no ${MINISIG_NAME}: offering it anyway ` +
+                '(fail-open until the release signing key is provisioned).',
+            );
+          }
+          this.available = found.available;
+          this.error = undefined;
+        }
+      }
       const v = this.available?.version;
       if (v && !this.told.has(v) && this.saved().dismissed !== v) {
         this.told.add(v);
@@ -150,6 +175,65 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
       this.emit('changed');
     }
     return this.view();
+  }
+
+  /**
+   * What the release's signature assets decided. 'ok' — the checksums are
+   * signed and verify; 'unsigned' — no .minisig asset (historical releases,
+   * or the signing key isn't provisioned yet); 'refused' — the release claims
+   * a signature but it doesn't check out, and the update is not offered.
+   */
+  private async verifyAssets(assets: ReleaseAssets): Promise<SignatureVerdict> {
+    const sig = assets.find((a) => a.name === MINISIG_NAME);
+    if (!sig) return { outcome: 'unsigned' };
+    const sums = assets.find((a) => a.name === SUMS_NAME);
+    if (!sums) {
+      return {
+        outcome: 'refused',
+        reason: `Update not offered: it has ${MINISIG_NAME} but no ${SUMS_NAME}.`,
+      };
+    }
+    if (!isGitHub(sums.browser_download_url) || !isGitHub(sig.browser_download_url)) {
+      return {
+        outcome: 'refused',
+        reason: `Update not offered: its ${SUMS_NAME} is not on the allowlisted github.com URL.`,
+      };
+    }
+    try {
+      const f = this.o.fetch ?? fetch;
+      const headers = { Accept: 'application/octet-stream', 'User-Agent': 'Vigil-at-Home' };
+      const [sumsRes, sigRes] = await Promise.all([
+        f(sums.browser_download_url, { headers, signal: AbortSignal.timeout(20_000) }),
+        f(sig.browser_download_url, { headers, signal: AbortSignal.timeout(20_000) }),
+      ]);
+      if (!sumsRes.ok || !sigRes.ok) {
+        return {
+          outcome: 'refused',
+          reason:
+            `Update not offered: downloading ${SUMS_NAME} to verify answered ` +
+            `${!sumsRes.ok ? sumsRes.status : sigRes.status}.`,
+        };
+      }
+      const ok = verifySumsSignature(
+        await sumsRes.text(),
+        await sigRes.text(),
+        this.o.signingPublicKey,
+      );
+      if (ok) return { outcome: 'ok' };
+      return {
+        outcome: 'refused',
+        reason:
+          `Update not offered: the signature over ${SUMS_NAME} does not verify ` +
+          'against the committed release key.',
+      };
+    } catch (err) {
+      return {
+        outcome: 'refused',
+        reason:
+          `Update not offered: could not download ${SUMS_NAME} to verify ` +
+          `(${err instanceof Error ? err.message : String(err)}).`,
+      };
+    }
   }
 
   setAuto(auto: boolean): void {
@@ -177,18 +261,23 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
   }
 }
 
+type SignatureVerdict =
+  { outcome: 'ok' } | { outcome: 'unsigned' } | { outcome: 'refused'; reason: string };
+
 /**
- * The newest release newer than `current`, or undefined. Pre-releases count on
- * a pre-release, and on any build while no full release has been published yet
- * (every Vigil release so far is an alpha, and local builds say 0.0.1).
+ * The newest release newer than `current`, with the release's own asset list
+ * so the caller can verify its checksum signature before offering it.
+ * Pre-releases count on a pre-release, and on any build while no full release
+ * has been published yet (every Vigil release so far is an alpha, and local
+ * builds say 0.0.1).
  */
-export function newest(
+function newestRelease(
   raw: unknown[],
   current: string,
   arch: string,
   repo: string,
   platform: NodeJS.Platform = 'darwin',
-): UpdateView['available'] | undefined {
+): { available: NonNullable<UpdateView['available']>; assets: ReleaseAssets } | undefined {
   const releases = raw.flatMap((item) => {
     const p = Release.safeParse(item);
     return p.success && !p.data.draft ? [p.data] : [];
@@ -214,11 +303,24 @@ export function newest(
         )
       : undefined;
   return {
-    version: best.version,
-    notesUrl: best.r.html_url,
-    ...(dmg ? { downloadUrl: dmg.browser_download_url } : {}),
-    ...(best.r.published_at ? { publishedAt: best.r.published_at } : {}),
+    available: {
+      version: best.version,
+      notesUrl: best.r.html_url,
+      ...(dmg ? { downloadUrl: dmg.browser_download_url } : {}),
+      ...(best.r.published_at ? { publishedAt: best.r.published_at } : {}),
+    },
+    assets: best.r.assets,
   };
+}
+
+/** The newest release newer than `current`, or undefined. */
+export function newest(
+  raw: unknown[],
+  current: string,
+  arch: string,
+  platform: NodeJS.Platform = 'darwin',
+): UpdateView['available'] | undefined {
+  return newestRelease(raw, current, arch, platform)?.available;
 }
 
 /**
