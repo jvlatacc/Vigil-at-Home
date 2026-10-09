@@ -159,6 +159,34 @@ insurance, not a behavior change). If boot still fails on more than 1 of the
 next 4 runs, the next move is baking the systemd install into an image layer
 built in the job, not another parameter tweak.
 
+### Registry move — Docker Hub throttling, and the shadow-perms catch
+
+The mirror-variance hardening proved out (boots clean), and the next failure
+landed one layer up: the registry itself. Two consecutive runs died before
+boot at exit 125 — the runner's Docker daemon timed out fetching the Docker
+Hub auth token for the pinned digest (21:46:06Z and 21:48:26Z on the same
+head), while the same endpoint answered from outside in 0.17 s. That is
+Docker Hub's chronic anonymous-pull throttling of GitHub-runner egress IPs,
+so a retry loop would only add latency and still fail while the pool is
+throttled. The pin moved to Rocky's own registry mirror,
+`quay.io/rockylinux/rockylinux:9` (digest verified against the registry API
+when choosing it), with the freeze-by-hand contract unchanged.
+
+The new digest is a different build, and it surfaced a second environmental
+failure: the wizard's exact commands died at sudo with `PAM account
+management error: Authentication service cannot retrieve authentication
+info`. The image ships `/etc/shadow` as mode 000 (no read for anyone — the
+old hub build was rescued incidentally by a shadow-utils upgrade whose
+post-install reset the mode), and on the Ubuntu runner's AppArmor the kernel
+denies `unix_chkpwd` the `cap_dac_override` that reading a 000 file needs,
+so the PAM account check fails even for root. The fix is the community-
+confirmed one from rocky-linux/sig-cloud-instance-images#56 and
+geerlingguy/docker-rockylinux9-ansible#6: `chmod 0400 /etc/shadow` after the
+dnf installs — owner-read needs no dac_override. Both upstream reports note
+the failure is not reproducible off Ubuntu hosts, which matches this
+investigation: the identical sequence ran clean under podman on a Debian 13
+sandbox.
+
 ### The Rocky kill-path finding — the container tier's first catch
 
 This is the finding the spec's load-bearing assumption said these jobs would
