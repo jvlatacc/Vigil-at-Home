@@ -84,10 +84,7 @@ int on_exec(struct trace_event_raw_sched_process_exec *ctx)
 	e.euid = (__u32)(ug >> 32);
 	bpf_get_current_comm(e.comm, sizeof(e.comm));
 
-	/* Parent: real_parent is authoritative; fall back to the fork-fed map.
-	 * sched_process_exec's tracepoint record carries only p->comm as its
-	 * "filename", so the exe prefix is comm-derived here — the hooks PR adds
-	 * the full path from the bprm hook. */
+	/* Parent: real_parent is authoritative; fall back to the fork-fed map. */
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
 	__u32 parent = BPF_CORE_READ(task, real_parent, tgid);
 	if (!parent) {
@@ -97,7 +94,15 @@ int on_exec(struct trace_event_raw_sched_process_exec *ctx)
 	}
 	e.ppid = parent;
 
-	__builtin_memcpy(e.payload, e.comm, sizeof(e.comm));
+	/* Full path: the record carries bprm->filename in its dynamic data
+	 * (TP_STRUCT__entry __string(filename, bprm->filename)). __data_loc
+	 * puts the offset from the record start in the low 16 bits and the
+	 * length in the high 16 (kernel include/trace/stages/
+	 * stage3_trace_output.h __get_dynamic_array). The core recorded the
+	 * comm here — same string as the basename, not a path. */
+	__u32 loc = ctx->__data_loc_filename;
+	bpf_probe_read_kernel_str(e.payload, sizeof(e.payload),
+				  (const char *)ctx + (loc & 0xffff));
 
 	return push(&e);
 }
