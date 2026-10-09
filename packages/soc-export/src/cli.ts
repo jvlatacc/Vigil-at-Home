@@ -128,7 +128,9 @@ async function runUpload(inv: CliInvocation, deps: { fetch?: typeof fetch }): Pr
   const client = ingestClientFor(inv, deps);
   const jsonl = readFileSync(file, 'utf8');
   const job = await client.uploadFindings(jsonl);
-  process.stdout.write(`${job.job_id}: ${job.message || 'ingest succeeded'}\n${summarizeJob(job)}\n`);
+  process.stdout.write(
+    `${job.job_id}: ${job.message || 'ingest succeeded'}\n${summarizeJob(job)}\n`,
+  );
   return 0;
 }
 

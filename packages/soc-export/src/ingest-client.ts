@@ -94,9 +94,12 @@ export class IngestClient {
   constructor(options: IngestClientOptions) {
     // Same rule as every AI provider: the key goes only to https, or localhost.
     if (!isSafeBaseUrl(options.baseUrl)) {
-      throw new TransportError('The Vigil SOC address must use https, or http only for localhost.', {
-        retryable: false,
-      });
+      throw new TransportError(
+        'The Vigil SOC address must use https, or http only for localhost.',
+        {
+          retryable: false,
+        },
+      );
     }
     this.base = options.baseUrl.replace(/\/$/, '');
     this.apiKey = options.apiKey;

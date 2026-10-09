@@ -14,7 +14,14 @@ const hasSqlite = await import('node:sqlite').then(
 
 describe('parseInvocation', () => {
   it('collects flags and positionals', () => {
-    const inv = parseInvocation(['upload', '--url', 'http://127.0.0.1:6987', '--key-env', 'K', 'a.jsonl']);
+    const inv = parseInvocation([
+      'upload',
+      '--url',
+      'http://127.0.0.1:6987',
+      '--key-env',
+      'K',
+      'a.jsonl',
+    ]);
     expect(inv.command).toBe('upload');
     expect(inv.flags).toEqual({ url: 'http://127.0.0.1:6987', 'key-env': 'K' });
     expect(inv.positional).toEqual(['a.jsonl']);
@@ -59,9 +66,25 @@ describe.skipIf(!hasSqlite)('main export', () => {
       makeAlert({ id: 'bad1', createdAt: T0 + 2 * HOUR, updatedAt: T0 + 2 * HOUR }),
     ]) {
       if (alert.id === 'bad1') {
-        insertAlert.run(alert.id, alert.createdAt, alert.updatedAt, alert.status, alert.severity, alert.ruleId, '{"id":1}');
+        insertAlert.run(
+          alert.id,
+          alert.createdAt,
+          alert.updatedAt,
+          alert.status,
+          alert.severity,
+          alert.ruleId,
+          '{"id":1}',
+        );
       } else {
-        insertAlert.run(alert.id, alert.createdAt, alert.updatedAt, alert.status, alert.severity, alert.ruleId, JSON.stringify(alert));
+        insertAlert.run(
+          alert.id,
+          alert.createdAt,
+          alert.updatedAt,
+          alert.status,
+          alert.severity,
+          alert.ruleId,
+          JSON.stringify(alert),
+        );
       }
     }
     const rule = {
@@ -82,9 +105,9 @@ describe.skipIf(!hasSqlite)('main export', () => {
       createdAt: T0,
       updatedAt: T0,
     };
-    db.prepare('INSERT INTO rules (id, version, mode, origin, updated_at, body) VALUES (?, ?, ?, ?, ?, ?)').run(
-      rule.id, rule.version, rule.mode, rule.origin, rule.updatedAt, JSON.stringify(rule),
-    );
+    db.prepare(
+      'INSERT INTO rules (id, version, mode, origin, updated_at, body) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(rule.id, rule.version, rule.mode, rule.origin, rule.updatedAt, JSON.stringify(rule));
     db.close();
   });
 
@@ -112,9 +135,15 @@ describe.skipIf(!hasSqlite)('main export', () => {
   it('applies since/until windows given as ISO dates', async () => {
     const outPath = join(dir, 'window.jsonl');
     const code = await main([
-      'export', '--db', dbPath, '--out', outPath,
-      '--since', new Date(T0 + HOUR).toISOString(),
-      '--until', new Date(T0 + 2 * HOUR).toISOString(),
+      'export',
+      '--db',
+      dbPath,
+      '--out',
+      outPath,
+      '--since',
+      new Date(T0 + HOUR).toISOString(),
+      '--until',
+      new Date(T0 + 2 * HOUR).toISOString(),
     ]);
     expect(code).toBe(0);
     expect(readFileSync(outPath, 'utf8').trimEnd().split('\n')).toHaveLength(1);
@@ -123,8 +152,13 @@ describe.skipIf(!hasSqlite)('main export', () => {
   it('writes nothing and exits cleanly on an empty window', async () => {
     const outPath = join(dir, 'empty.jsonl');
     const code = await main([
-      'export', '--db', dbPath, '--out', outPath,
-      '--since', String(T0 + 999 * HOUR),
+      'export',
+      '--db',
+      dbPath,
+      '--out',
+      outPath,
+      '--since',
+      String(T0 + 999 * HOUR),
     ]);
     expect(code).toBe(0);
     expect(readFileSyncSafe(outPath)).toBeUndefined();
@@ -154,7 +188,16 @@ describe('main upload and case', () => {
     finished_at: '2026-10-09T12:00:01Z',
     message: 'Imported 1 findings',
     error: null,
-    stats: { findings_total: 1, findings_imported: 1, findings_skipped: 0, findings_errors: 0, cases_total: 0, cases_imported: 0, cases_skipped: 0, cases_errors: 0 },
+    stats: {
+      findings_total: 1,
+      findings_imported: 1,
+      findings_skipped: 0,
+      findings_errors: 0,
+      cases_total: 0,
+      cases_imported: 0,
+      cases_skipped: 0,
+      cases_errors: 0,
+    },
   };
 
   it('uploads a JSONL file through the multipart contract and reports the stats', async () => {
@@ -219,8 +262,14 @@ describe('main upload and case', () => {
             format: 'json',
             message: 'Imported 1 cases',
             stats: {
-              findings_total: 0, findings_imported: 0, findings_skipped: 0, findings_errors: 0,
-              cases_total: 1, cases_imported: 1, cases_skipped: 0, cases_errors: 0,
+              findings_total: 0,
+              findings_imported: 0,
+              findings_skipped: 0,
+              findings_errors: 0,
+              cases_total: 1,
+              cases_imported: 1,
+              cases_skipped: 0,
+              cases_errors: 0,
             },
           }),
       );
@@ -253,7 +302,14 @@ describe('main upload and case', () => {
 
   it('fails with a usage error when the key environment variable is unset', async () => {
     delete process.env['VAH_TEST_MISSING_KEY'];
-    const code = await main(['upload', '--url', 'http://127.0.0.1:6987', '--key-env', 'VAH_TEST_MISSING_KEY', 'x.jsonl']);
+    const code = await main([
+      'upload',
+      '--url',
+      'http://127.0.0.1:6987',
+      '--key-env',
+      'VAH_TEST_MISSING_KEY',
+      'x.jsonl',
+    ]);
     expect(code).toBe(2);
   });
 
