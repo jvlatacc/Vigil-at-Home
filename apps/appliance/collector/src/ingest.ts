@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { IngestRecord, type IngestRecord as IngestRecordType } from './record';
 import { RateLimiter } from './rateLimit';
@@ -209,7 +209,10 @@ export class IngestServer {
   private authorized(header: string | undefined): boolean {
     if (header === undefined || !header.startsWith('Bearer ')) return false;
     const presented = header.slice('Bearer '.length).trim();
-    return sha256(presented).equals(this.tokenHash);
+    // Both sides are fixed-length SHA-256 digests, so timingSafeEqual cannot
+    // throw on a length mismatch — and the comparison is explicitly
+    // constant-time rather than depending on Buffer internals.
+    return timingSafeEqual(sha256(presented), this.tokenHash);
   }
 
   private hasOverCapLine(body: Buffer): boolean {
