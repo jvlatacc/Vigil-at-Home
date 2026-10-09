@@ -15,15 +15,15 @@ kernel hooks (tracepoints, LSM) ──► shared ring buffer ──► daemon:
 
 ## Layout
 
-| Path              | Contents                                                                                                                           |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `bpf/vigil.bpf.c` | the single CO-RE object: sched + module tracepoints, LSM file/network/privilege hooks with kprobe twins, 8 MiB ring buffer, drop counter |
+| Path              | Contents                                                                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bpf/vigil.bpf.c` | the single CO-RE object: sched + module tracepoints, LSM file/network/privilege hooks with kprobe twins, 8 MiB ring buffer, drop counter                             |
 | `src/`            | the daemon (`daemon.c`) and its libraries: event contract, payload contract, attach planner, reorder pipeline, index writer, RFC 5424 emitter, feature probe, health |
-| `rules/`          | alert rules as data (land with the rules PR; evaluator is fixed)                                                                   |
-| `systemd/`        | hardened unit (CAP_BPF + CAP_PERFMON, no CAP_SYS_ADMIN)                                                                            |
-| `rsyslog/`        | local-retention drop-in; optional queued TLS forwarding is admin-configured                                                        |
-| `tests/`          | host-runnable ctest suites + record/replay and hook-path fixtures (no kernel needed)                                               |
-| `scripts/`        | `gen_vmlinux.sh` (BTF → vmlinux.h), `run_verifier_check.sh` (verifier pre-check)                                                   |
+| `rules/`          | alert rules as data (land with the rules PR; evaluator is fixed)                                                                                                     |
+| `systemd/`        | hardened unit (CAP_BPF + CAP_PERFMON, no CAP_SYS_ADMIN)                                                                                                              |
+| `rsyslog/`        | local-retention drop-in; optional queued TLS forwarding is admin-configured                                                                                          |
+| `tests/`          | host-runnable ctest suites + record/replay and hook-path fixtures (no kernel needed)                                                                                 |
+| `scripts/`        | `gen_vmlinux.sh` (BTF → vmlinux.h), `run_verifier_check.sh` (verifier pre-check)                                                                                     |
 
 ## Build and test (host)
 
