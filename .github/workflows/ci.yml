@@ -153,10 +153,13 @@ jobs:
           # Digest pin: frozen deliberately — bump by hand (moving-tag drift
           # broke boot on 2026-10-09: a fresh rockylinux:9 no longer ships
           # systemd, and the cold install exceeded the old systemctl poll).
+          # Pulled from quay since 2026-10-09: Docker Hub's anonymous-pull
+          # throttling of GitHub-runner egress IPs timed out the auth-token
+          # fetch twice in a row; quay is Rocky's own registry mirror.
           docker run -d --name vigil-rhel --privileged --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
-            rockylinux:9@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 \
+            quay.io/rockylinux/rockylinux:9@sha256:8101994123cf3d0a8fee517bee7f39e555c7d92bd2d9eb3303cc988a0eeed00f \
             /bin/bash -euc '
             if [ ! -x /usr/lib/systemd/systemd ]; then
               # BaseOS-only: the non-BaseOS repo metadata fetches were the silent
