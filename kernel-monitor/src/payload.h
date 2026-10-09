@@ -5,11 +5,11 @@
  * the layouts below. Every field is fixed-width little-endian unless noted;
  * strings are NUL-terminated prefixes (paths longer than the cap are cut,
  * never malformed).
- */
+ *
+ * Constants and enums only — no stdint include, so the BPF target (which
+ * has no host libc headers) can share this file. */
 #ifndef VIG_PAYLOAD_H
 #define VIG_PAYLOAD_H
-
-#include <stdint.h>
 
 /* payload capacity == struct vig_event.payload (event.h) */
 #define VIG_PAYLOAD_MAX 192
