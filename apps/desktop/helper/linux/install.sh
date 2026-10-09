@@ -22,7 +22,7 @@ POLICY=/usr/share/polkit-1/actions/com.vigilathome.helper.policy
 SOCKET=/run/vigil-helper.sock
 
 for f in "$SRC/node" "$SRC/helper.mjs" "$HERE/vigil-helper" "$HERE/vigil-helper.service" \
-  "$HERE/com.vigilathome.helper.policy"; do
+  "$HERE/vigil-helper-launcher" "$HERE/com.vigilathome.helper.policy"; do
   [ -f "$f" ] || { echo "Missing $f" >&2; exit 1; }
 done
 command -v systemctl >/dev/null || { echo "The helper needs systemd." >&2; exit 1; }
@@ -30,6 +30,9 @@ command -v systemctl >/dev/null || { echo "The helper needs systemd." >&2; exit 
 # Copy the new files first, then stop the running copy, if any, and swap them
 # in, so an update leaves the helper stopped for as short a time as possible.
 install -d -o root -g root -m 755 "$LIBEXEC"
+# The unit's ReadWritePaths names this, so it must exist before the service
+# first starts under ProtectSystem=strict.
+install -d -o root -g root -m 755 /var/lib/vigil
 rm -rf "$DEST.new"
 install -d -o root -g root -m 755 "$DEST.new"
 install -o root -g root -m 755 "$SRC/node" "$DEST.new/node"
@@ -38,6 +41,9 @@ systemctl stop vigil-helper.service 2>/dev/null || true
 rm -rf "$DEST"
 mv "$DEST.new" "$DEST"
 install -o root -g root -m 755 "$HERE/vigil-helper" "$LIBEXEC/vigil-helper"
+# The launcher is the program pkexec runs for the install action, so the
+# password dialog names Vigil (see com.vigilathome.helper.policy).
+install -o root -g root -m 755 "$HERE/vigil-helper-launcher" "$LIBEXEC/vigil-helper-launcher"
 install -o root -g root -m 644 "$HERE/vigil-helper.service" "$UNIT"
 install -d -o root -g root -m 755 "$(dirname "$POLICY")"
 install -o root -g root -m 644 "$HERE/com.vigilathome.helper.policy" "$POLICY"

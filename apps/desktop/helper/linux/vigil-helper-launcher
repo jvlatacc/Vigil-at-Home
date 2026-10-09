@@ -1,0 +1,49 @@
+#!/bin/sh
+# Runs a staged Vigil at Home helper install as root. This is the program
+# pkexec runs for the com.vigilathome.helper.install action, so the password
+# dialog names Vigil instead of a bare shell. polkit's exec.path annotation
+# constrains which program runs - not its arguments, which the caller still
+# chooses: the app stages the helper files and computes their digest, and the
+# check below re-verifies them as root before anything is run. Keep this
+# staging logic in step with rootStageScript('linux') in helper-install.ts -
+# a mismatch fails every install with a digest error.
+set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+[ "$#" -ge 4 ] || {
+  echo "Usage: vigil-helper-launcher <stage-dir> <script> <digest> <app> [files...]" >&2
+  exit 2
+}
+src=$1
+run=$2
+want=$3
+app=$4
+shift 4
+
+# A fixed root-owned, sticky parent: a folder made in the user's own TMPDIR
+# could be renamed away and replaced by its owner.
+t=$(mktemp -d /tmp/vigil-helper.XXXXXXXX)
+trap 'rm -rf "$t"' EXIT
+
+# Plain files only, never links: a FIFO or a link to a device would hang root
+# or fill the disk.
+for f; do
+  [ -f "$src/$f" ] && [ ! -h "$src/$f" ] || { echo "Missing $f" >&2; exit 1; }
+  case $f in
+    */*) mkdir -p "$t/${f%/*}" ;;
+  esac
+  cp -P "$src/$f" "$t/$f"
+  [ -f "$t/$f" ] && [ ! -h "$t/$f" ] || exit 1
+done
+
+# Each file's SHA-256 on its own line, as sha256sum prints it for standard
+# input, then the SHA-256 of those lines - the digest the app computed from
+# its own copy (helperDigest).
+got=$(for f; do sha256sum <"$t/$f"; done | sha256sum)
+[ "${got%% *}" = "$want" ] || {
+  echo "The helper files changed while installing, so nothing was changed." >&2
+  exit 1
+}
+
+sh "$t/$run" "$app"

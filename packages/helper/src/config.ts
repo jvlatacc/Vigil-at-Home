@@ -170,6 +170,9 @@ export const LINUX_PROTECTED_PREFIXES = [
   '/usr/share/',
   '/boot/',
   '/etc/',
+  // Root's home: its files move as root, so an unprivileged request must
+  // never be able to send them to the quarantine store (SR F5).
+  '/root/',
   '/proc/',
   '/sys/',
   '/dev/',
