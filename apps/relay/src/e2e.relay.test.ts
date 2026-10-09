@@ -104,7 +104,6 @@ async function probeModules(): Promise<{ mods?: RelayModules; missing: string }>
   let app: unknown;
 
   try {
-    // @ts-expect-error staged: the shipper-engine PR brings @vigil/shipper
     shipper = await import('@vigil/shipper');
   } catch {
     missing.push('@vigil/shipper (shipper-engine PR)');
@@ -113,6 +112,12 @@ async function probeModules(): Promise<{ mods?: RelayModules; missing: string }>
     app = await import('./server.js');
   } catch {
     missing.push('apps/relay server bootstrap (relay-service PR)');
+  }
+  try {
+    // @ts-expect-error staged: the MCP-server PR brings the relay MCP handler
+    await import('./mcp.js');
+  } catch {
+    missing.push('relay MCP handler (MCP-server PR)');
   }
   if (missing.length > 0) return { missing: missing.join(', ') };
 

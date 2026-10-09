@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.31.0",
+    "@vigil/shipper": "workspace:*",
     "esbuild": "^0.28.2"
   }
 }
