@@ -194,6 +194,13 @@ jobs:
             # The major tracks packageManager in package.json (pnpm 10 today).
             npm install -g pnpm@10
             git config --global --add safe.directory /workspace
+            # The image ships /etc/shadow as mode 000, and on the Ubuntu runner
+            # AppArmor denies unix_chkpwd the cap_dac_override that reading a
+            # 000 file needs — sudo's PAM account check then fails with
+            # "Authentication service cannot retrieve authentication info"
+            # (rocky-linux/sig-cloud-instance-images#56). Owner-read fixes it
+            # for this disposable test container.
+            chmod 0400 /etc/shadow
           '
       - name: Install dependencies
         run: docker exec -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -w /workspace vigil-rhel pnpm install --frozen-lockfile
