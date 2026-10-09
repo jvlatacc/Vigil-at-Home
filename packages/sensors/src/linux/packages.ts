@@ -1,8 +1,8 @@
 // Linux has no code signing, so Vigil's trust model there is the package
-// manager: a program dpkg or rpm installed counts as trusted (`package`),
-// anything else (a download, a build, something dropped in ~/.local/bin)
-// as `unsigned`. Rules then treat untrusted programs on Linux the way they
-// treat unsigned ones on macOS.
+// manager: a program dpkg, rpm or pacman installed counts as trusted
+// (`package`), anything else (a download, a build, something dropped in
+// ~/.local/bin) as `unsigned`. Rules then treat untrusted programs on Linux
+// the way they treat unsigned ones on macOS.
 //
 //   exec /usr/bin/curl          ─► owned by dpkg "curl"   ─► signing: package, signingId pkg:curl
 //   exec ~/.cache/x/miner       ─► owned by nothing       ─► signing: unsigned
@@ -24,6 +24,7 @@ import type { SignatureInfo } from '../enrich.js';
 export const DPKG_INFO_DIR = '/var/lib/dpkg/info';
 export const DPKG_STATUS = '/var/lib/dpkg/status';
 export const RPM_DB_DIRS = ['/var/lib/rpm', '/usr/lib/sysimage/rpm'];
+export const PACMAN_DB_DIR = '/var/lib/pacman/local';
 
 /** Folders nothing is run from directly. */
 const SKIP_PREFIXES = [
@@ -132,6 +133,59 @@ export function rpmSource(
       for (const line of text.split('\n')) {
         const tab = line.indexOf('\t');
         if (tab > 0) yield [line.slice(0, tab), line.slice(tab + 1)];
+      }
+    },
+  };
+}
+
+/**
+ * pacman (Arch and its relatives). The local database is plain files, like
+ * dpkg's: one folder per package, whose `files` entry lists the package's
+ * paths (alpm-db-files(5) — a `%FILES%` header, root-relative paths,
+ * directories with a trailing slash, an optional `%BACKUP%` section to
+ * skip). Without this source every pacman-installed program read
+ * "unsigned", inverting the trust signal on the whole system.
+ */
+export function pacmanSource(dbDir = PACMAN_DB_DIR): PackageSource {
+  return {
+    version() {
+      try {
+        // Installing or removing a package adds or removes a folder here,
+        // which moves the folder's own mtime.
+        return `pacman:${statSync(dbDir).mtimeMs}`;
+      } catch {
+        return undefined;
+      }
+    },
+    *load() {
+      let entries: string[];
+      try {
+        entries = readdirSync(dbDir);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        // "<name>-<version>-<release>", the version optionally prefixed
+        // "<epoch>:". Neither version nor epoch holds a hyphen, so the name
+        // is everything before the last two dash-separated fields.
+        const parts = entry.split('-');
+        if (parts.length < 3 || !parts[0]) continue;
+        const pkg = parts.slice(0, -2).join('-');
+        let text: string;
+        try {
+          text = readFileSync(join(dbDir, entry, 'files'), 'utf8');
+        } catch {
+          continue;
+        }
+        let section = '';
+        for (const line of text.split('\n')) {
+          if (!line || line.startsWith('%')) {
+            section = line.slice(1, -1);
+            continue;
+          }
+          // Directories end with a slash; nothing is run from them directly.
+          if (section === 'FILES' && !line.endsWith('/')) yield [`/${line}`, pkg];
+        }
       }
     },
   };
