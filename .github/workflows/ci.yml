@@ -66,3 +66,19 @@ jobs:
           for f in "${files[@]}"; do
             sudo -E env "PATH=$PATH" VIGIL_LINUX_INTEGRATION=1 pnpm vitest run "$f"
           done
+
+  appliance:
+    # Appliance shell gate (POSIX sh — there is no Node.js on device):
+    # shellcheck every appliance shell file with zero findings, then run the
+    # hermetic bats suite. Existing TS jobs above are untouched;
+    # appliance/ is deliberately not a pnpm workspace member.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Shellcheck appliance shell (zero findings)
+        run: shellcheck $(find appliance -type f -name '*.sh')
+      - name: Install bats
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+      - name: Bats fragment and flag contracts
+        run: bats appliance/opnsense/tests
