@@ -93,12 +93,13 @@ From the validation matrix (GA §5.1):
 | Tier | What runs                                                                                                         | Where                                                                   |
 | ---- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | A    | Full root integration suite on Ubuntu 24.04 (nftables, fapolicyd 1.3.x enforcement, osquery eBPF, helper install) | `ci.yml` `linux` job — unchanged, the anchor                            |
-| B    | Same suite on Rocky Linux 9 (dnf, fapolicyd 1.4.x)                                                                | `ci.yml` `linux-dnf` container job (privileged, systemd as PID 1)       |
+| B    | Same suite on Rocky Linux 9 (dnf, fapolicyd 1.4.x) — one scenario skipped (the Rocky kill-path finding, below)    | `ci.yml` `linux-dnf` container job (privileged, systemd as PID 1)       |
 | C/D  | SELinux-enforcing RHEL, real-desktop flows (tray, popups, pkexec dialogs), Arch/Omarchy, Debian 12                | manual — the routine is the documented way to run them on real hardware |
 
 The container jobs run the same six integration files via
 `scripts/ci/container-integration-tests.sh`; no test changes were expected
-here, but one was needed (below).
+here, but two were needed (below): the setup test's distro gate, and the
+conditional skip of the scenario the Rocky job caught.
 
 ### The setup-test distro gate
 
@@ -139,15 +140,47 @@ the routine's fapolicyd check decides, and the version floor for the
 enforcing check is fapolicyd 1.3+ (Ubuntu 24.04, Debian 13) — content D3's
 getting-started document carries.
 
+### The Rocky kill-path finding — the container tier's first catch
+
+This is the finding the spec's load-bearing assumption said these jobs would
+surface: a genuine distro difference no amount of Ubuntu CI could show. With
+the container booting deterministically (digest-pinned image, systemd-aware
+wait — the workflow step's comment records why the pin is bumped by hand),
+the full suite ran on Rocky 9:
+
+- helper-install passed, and **linux-setup passed both tests on the dnf
+  branch** — the osquery rpm-repo and `dnf install fapolicyd` commands the
+  gap analysis flagged as never-executed (GA G1) finally ran and were proven.
+- The same job caught an rpm query-format incompatibility that left the
+  package-trust index empty on el9 (every binary read "unsigned"); fixed on
+  this branch by reading rpm's trust listing across rpm versions.
+- The `nftables` scenario of `flow.integration.test.ts` passed — osquery
+  events reach the helper and response actions work on Rocky.
+- The malware-kill scenario failed, and the instrumentation added for this
+  effort narrowed it: the helper client saw 77 launches and the stand-in's
+  row reached the results log exactly once, but no kill was recorded and the
+  process survived the 60 s wait. The defect sits between launch ingestion
+  and the hash/kill decision, and it is Rocky-specific; the rpm fix was
+  verified in the setup tests but did not resolve it.
+
+Per the maintainer's decision, the scenario is conditionally skipped on the
+dnf family (`it.skipIf(dnfFamily)` with a loud reason naming the task) so
+the job stays green and the other five scenarios keep exercising the
+previously-never-run dnf branch on every push. The skip is tracked as
+**todo_Jlc0VwxN — "Fix Rocky (dnf-family) kill-path bug surfaced by the dnf
+CI job"**; that fix's PR branches off main and uses this very job as its
+verification instrument, which is why D2 lands first. Do not re-enable the
+scenario silently; removing the skip is that task's last step.
+
 ## Acceptance criteria (Spec D2)
 
-| Criterion                                                              | Verified by                                                                                                                            |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `validate-linux.sh` exits 0 on a healthy Debian-family system, as root | Run on the repo sandbox (Debian 13) with the .deb, helper, fapolicyd and osquery installed; recorded in the PR                         |
-| …and exits nonzero when a step is sabotaged                            | Sabotage run (fapolicyd stopped) recorded in the PR; the sabotage path is additionally exercised on every `pnpm test` by the self-test |
-| dnf-family job green in CI                                             | `linux-dnf` job on this PR                                                                                                             |
-| Ubuntu integration suite unaffected                                    | `linux` job on this PR                                                                                                                 |
-| Routine is CI-usable and human-usable                                  | Exit codes 0/1/2, PASS/FAIL plus remedy per check, documented in `--help` and here                                                     |
+| Criterion                                                              | Verified by                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validate-linux.sh` exits 0 on a healthy Debian-family system, as root | Run on the repo sandbox (Debian 13) with the .deb, helper, fapolicyd and osquery installed. **Evidence caveat:** 6 of 7 checks PASSED; the seventh (osquery eBPF row) could not verify locally — the sandbox kernel denies osquery's BPF publisher its syscall tracepoint, and the routine rightly failed that check. The check's pass path is exercised in CI (`linux`, and the osquery setup `linux-dnf` proves), so full eBPF evidence comes from CI, not the sandbox run |
+| …and exits nonzero when a step is sabotaged                            | Sabotage run (fapolicyd stopped) recorded in the PR; the sabotage path is additionally exercised on every `pnpm test` by the self-test                                                                                                                                                                                                                                                                                                                                       |
+| dnf-family job green in CI                                             | `linux-dnf` job on this PR, with the one Rocky-blocked scenario conditionally skipped (finding above, tracked as todo_Jlc0VwxN); the other five scenarios and both setup tests run on every push                                                                                                                                                                                                                                                                             |
+| Ubuntu integration suite unaffected                                    | `linux` job on this PR                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Routine is CI-usable and human-usable                                  | Exit codes 0/1/2, PASS/FAIL plus remedy per check, documented in `--help` and here                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Out of scope, documented as follow-ups
 
