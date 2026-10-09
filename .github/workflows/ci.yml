@@ -150,17 +150,25 @@ jobs:
           # from the first CI run: "exec: /usr/sbin/init: no such file or
           # directory"). Boot by binary path, installing the package first
           # only if the image lacks the binary; exec makes systemd PID 1.
+          # Digest pin: frozen deliberately — bump by hand (moving-tag drift
+          # broke boot on 2026-10-09: a fresh rockylinux:9 no longer ships
+          # systemd, and the cold install exceeded the old systemctl poll).
           docker run -d --name vigil-rhel --privileged --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
-            rockylinux:9 /bin/bash -euc '
+            rockylinux:9@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 \
+            /bin/bash -euc '
             if [ ! -x /usr/lib/systemd/systemd ]; then
               dnf install -y systemd
             fi
             exec /usr/lib/systemd/systemd --system
           ' >/dev/null
-          for i in $(seq 1 60); do
-            s=$(docker exec vigil-rhel systemctl is-system-running 2>/dev/null || true)
+          # Poll for the systemd runtime directory, not systemctl: the pinned
+          # image has no systemd until the install above finishes, so a
+          # systemctl probe fails with "executable file not found" for the
+          # whole cold-install window.
+          for i in $(seq 1 90); do
+            s=$(docker exec vigil-rhel /bin/bash -c 'test -d /run/systemd/system && systemctl is-system-running 2>/dev/null || true')
             case "$s" in running | degraded) break ;; esac
             sleep 2
           done
