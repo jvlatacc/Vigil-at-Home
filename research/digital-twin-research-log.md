@@ -17,15 +17,15 @@ Working interpretation: an interactive, live view of current system state — ru
 
 ## 2. Step log
 
-| # | When (UTC) | Step | Result |
-|---|---|---|---|
-| 1 | 17:55 | Request received in thread `th_zBl7R7ra` (project `prj_ycb1002D`). Orientation pass: workspace-wide search + project inventory. | This project had **zero** existing artifacts/tasks — fresh feature thread. |
-| 2 | 17:55 | Prior-work recovery: workspace search surfaced three sibling-project research artifacts about this same repo. Read **"Vigil Linux implementation map"** (`art_IkQSYZL6`, 3,396 words) in full. | Established before any dispatch: Electron app + root helper architecture, osquery sensor wiring, transport (NDJSON over `/run/vigil-helper.sock`), CI/test layout. Also noted: "NetFlow emission findings" (`art_jlOYR7Fc`) and "Security Findings" (`art_NKyO8wBc`). |
-| 3 | 17:55 | Direct repo inspection on the shared repo sandbox (`cmp_fBk8IVvp`). | Confirmed: pnpm monorepo; `apps/desktop/src/{main,preload,renderer,shared}`; `packages/{agent-hook,ai,bench,core,detection,helper,sensors}`; root scripts (`check:naming`, `lint`, `typecheck`, `test`, `check`); node ≥ 22.12, pnpm 10.33. |
-| 4 | 17:55:57 | Created two **read-only** research tasks under root `todo_1UlpqO49`; dispatched 17:56 as parallel coder workers, each in its own independent sandbox pinned to commit `67ba6fc`: data layer + IPC (`todo_9sC8v9IJ`) and renderer/UI (`todo_iJS99vKK`). | Both workers ran read-only (no edits, no branches, no PRs, app not run). |
-| 5 | 18:01 | UI research published **`art_1ZTVjSQA`**; read in full by the orchestrator; task closed 18:02. | Renderer/UI fully mapped — §3 below. |
-| 6 | 18:03 | Data-layer research published **`art_pcK3zuwe`** (26.7k chars, retrievability verified after a republish); read in full by the orchestrator; task closed 18:04. | Data path fully mapped, with a 10-item gap list — §4 below. One correction to the research brief: the log-tail converter is `packages/sensors/src/tail.ts`, not `packages/helper/src/tail.ts` (does not exist). |
-| 7 | 18:05 | This step log written and committed to the public repo under `research/`. | This file. |
+| #   | When (UTC) | Step                                                                                                                                                                                                                                                   | Result                                                                                                                                                                                                                                                                |
+| --- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 17:55      | Request received in thread `th_zBl7R7ra` (project `prj_ycb1002D`). Orientation pass: workspace-wide search + project inventory.                                                                                                                        | This project had **zero** existing artifacts/tasks — fresh feature thread.                                                                                                                                                                                            |
+| 2   | 17:55      | Prior-work recovery: workspace search surfaced three sibling-project research artifacts about this same repo. Read **"Vigil Linux implementation map"** (`art_IkQSYZL6`, 3,396 words) in full.                                                         | Established before any dispatch: Electron app + root helper architecture, osquery sensor wiring, transport (NDJSON over `/run/vigil-helper.sock`), CI/test layout. Also noted: "NetFlow emission findings" (`art_jlOYR7Fc`) and "Security Findings" (`art_NKyO8wBc`). |
+| 3   | 17:55      | Direct repo inspection on the shared repo sandbox (`cmp_fBk8IVvp`).                                                                                                                                                                                    | Confirmed: pnpm monorepo; `apps/desktop/src/{main,preload,renderer,shared}`; `packages/{agent-hook,ai,bench,core,detection,helper,sensors}`; root scripts (`check:naming`, `lint`, `typecheck`, `test`, `check`); node ≥ 22.12, pnpm 10.33.                           |
+| 4   | 17:55:57   | Created two **read-only** research tasks under root `todo_1UlpqO49`; dispatched 17:56 as parallel coder workers, each in its own independent sandbox pinned to commit `67ba6fc`: data layer + IPC (`todo_9sC8v9IJ`) and renderer/UI (`todo_iJS99vKK`). | Both workers ran read-only (no edits, no branches, no PRs, app not run).                                                                                                                                                                                              |
+| 5   | 18:01      | UI research published **`art_1ZTVjSQA`**; read in full by the orchestrator; task closed 18:02.                                                                                                                                                         | Renderer/UI fully mapped — §3 below.                                                                                                                                                                                                                                  |
+| 6   | 18:03      | Data-layer research published **`art_pcK3zuwe`** (26.7k chars, retrievability verified after a republish); read in full by the orchestrator; task closed 18:04.                                                                                        | Data path fully mapped, with a 10-item gap list — §4 below. One correction to the research brief: the log-tail converter is `packages/sensors/src/tail.ts`, not `packages/helper/src/tail.ts` (does not exist).                                                       |
+| 7   | 18:05      | This step log written and committed to the public repo under `research/`.                                                                                                                                                                              | This file.                                                                                                                                                                                                                                                            |
 
 ---
 
@@ -109,12 +109,12 @@ These are the research-backed implications the spec must settle; nothing here is
 
 ## Appendix A — Artifacts produced this effort
 
-| Artifact | Content |
-|---|---|
+| Artifact       | Content                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------- |
 | `art_IkQSYZL6` | Vigil Linux implementation map (sibling project "Vigil At Home Validation"; read for orientation) |
-| `art_1ZTVjSQA` | Digital twin renderer/UI findings — full file:line citations |
-| `art_pcK3zuwe` | Digital twin data-layer + IPC findings — full file:line citations, 10-item gap list |
-| this file | Step log (committed to the repo under `research/`) |
+| `art_1ZTVjSQA` | Digital twin renderer/UI findings — full file:line citations                                      |
+| `art_pcK3zuwe` | Digital twin data-layer + IPC findings — full file:line citations, 10-item gap list               |
+| this file      | Step log (committed to the repo under `research/`)                                                |
 
 ## Appendix B — Conventions and traps discovered
 
