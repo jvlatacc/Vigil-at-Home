@@ -29,9 +29,36 @@ obj=bpf/vigil.bpf.o
 echo "== program sections in $obj =="
 "$objdump_bin" -h "$obj" | sed -n 's/^ *[0-9][0-9]* \(.*\.bpf\.[a-z_]*\|.*lsm\/[a-z_]*\|.*tracepoint\/[a-z_/]*\).*/\1/p'
 
-for sec in tracepoint/sched/sched_process_exec tracepoint/sched/sched_process_fork; do
-	if ! "$bpftool_bin" btf dump file "$obj" 2>/dev/null | grep -q "$sec" &&
-	   ! "$objdump_bin" -h "$obj" | grep -q "$sec"; then
+# Capture full outputs first: `grep -q` closes the pipe early, and under
+# pipefail the producer's SIGPIPE would make a FOUND section read as
+# missing.
+sections_btf="$("$bpftool_bin" btf dump file "$obj" 2>/dev/null || true)"
+sections_hdr="$("$objdump_bin" -h "$obj" || true)"
+
+for sec in \
+	tracepoint/sched/sched_process_exec \
+	tracepoint/sched/sched_process_fork \
+	tracepoint/module/module_load \
+	tracepoint/module/module_free \
+	lsm/file_open \
+	lsm/inode_unlink \
+	lsm/inode_rename \
+	lsm/file_truncate \
+	lsm/socket_connect \
+	lsm/socket_bind \
+	lsm/socket_listen \
+	lsm/capset \
+	kprobe/security_file_open \
+	kprobe/security_inode_unlink \
+	kprobe/security_inode_rename \
+	kprobe/security_file_truncate \
+	kprobe/security_socket_connect \
+	kprobe/security_socket_bind \
+	kprobe/security_socket_listen \
+	kprobe/security_capset \
+	kprobe/commit_creds; do
+	if ! grep -q "$sec" <<<"$sections_btf" &&
+	   ! grep -q "$sec" <<<"$sections_hdr"; then
 		echo "FAIL: section $sec missing" >&2
 		exit 1
 	fi
