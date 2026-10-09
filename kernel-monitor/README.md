@@ -15,15 +15,15 @@ kernel hooks (tracepoints, LSM) ──► shared ring buffer ──► daemon:
 
 ## Layout
 
-| Path | Contents |
-| --- | --- |
-| `bpf/vigil.bpf.c` | the single CO-RE object: tracepoint + LSM programs, 8 MiB ring buffer, drop counter |
-| `src/` | the daemon (`daemon.c`) and its libraries: event contract, reorder pipeline, index writer, RFC 5424 emitter, feature probe, health |
-| `rules/` | alert rules as data (land with the rules PR; evaluator is fixed) |
-| `systemd/` | hardened unit (CAP_BPF + CAP_PERFMON, no CAP_SYS_ADMIN) |
-| `rsyslog/` | local-retention drop-in; optional queued TLS forwarding is admin-configured |
-| `tests/` | host-runnable ctest suites + record/replay fixtures (no kernel needed) |
-| `scripts/` | `gen_vmlinux.sh` (BTF → vmlinux.h), `run_verifier_check.sh` (verifier pre-check) |
+| Path              | Contents                                                                                                                           |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `bpf/vigil.bpf.c` | the single CO-RE object: tracepoint + LSM programs, 8 MiB ring buffer, drop counter                                                |
+| `src/`            | the daemon (`daemon.c`) and its libraries: event contract, reorder pipeline, index writer, RFC 5424 emitter, feature probe, health |
+| `rules/`          | alert rules as data (land with the rules PR; evaluator is fixed)                                                                   |
+| `systemd/`        | hardened unit (CAP_BPF + CAP_PERFMON, no CAP_SYS_ADMIN)                                                                            |
+| `rsyslog/`        | local-retention drop-in; optional queued TLS forwarding is admin-configured                                                        |
+| `tests/`          | host-runnable ctest suites + record/replay fixtures (no kernel needed)                                                             |
+| `scripts/`        | `gen_vmlinux.sh` (BTF → vmlinux.h), `run_verifier_check.sh` (verifier pre-check)                                                   |
 
 ## Build and test (host)
 
