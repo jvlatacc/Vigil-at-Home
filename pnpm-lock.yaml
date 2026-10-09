@@ -181,6 +181,19 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/shipper:
+    dependencies:
+      '@vigil/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
+    devDependencies:
+      '@vigil/ai':
+        specifier: workspace:*
+        version: link:../ai
+
 packages:
 
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.283':
