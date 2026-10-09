@@ -368,7 +368,8 @@ static __always_inline void vig_bind_body(const struct sockaddr *addr)
 
 	vig_fill_common(&e, OP_NET_LISTEN);
 	e.payload[0] = VIG_NET_BIND;
-	vig_net_addr_fill(&e, 5, addr);
+	/* same layout as listen: op byte, then family/port/address */
+	vig_net_addr_fill(&e, 1, addr);
 	push(&e);
 }
 
