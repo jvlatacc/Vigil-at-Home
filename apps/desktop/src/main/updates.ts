@@ -3,8 +3,21 @@ import { z } from 'zod';
 import type { UpdateView } from '../shared/updates.js';
 
 /** Where releases are published. Only published releases are visible; drafts never are. */
-export const RELEASES_URL =
-  'https://api.github.com/repos/ShmalexM/Vigil-at-Home/releases?per_page=30';
+export function releasesUrl(repo: string): string {
+  return `https://api.github.com/repos/${repo}/releases?per_page=30`;
+}
+
+/**
+ * The repo this build checks for updates, named by build configuration
+ * (electron.vite.config.ts; see update-repo.ts). Undefined in fork builds,
+ * which ship with update checks off — upstream releases are not updates for
+ * them (audit INFO-2).
+ */
+export const UPDATE_REPO: string | undefined =
+  typeof __VIGIL_UPDATE_REPO__ === 'string' && __VIGIL_UPDATE_REPO__
+    ? __VIGIL_UPDATE_REPO__
+    : undefined;
+
 /** Wait a little after start, then check a few times a day. */
 export const FIRST_CHECK_MS = 60_000;
 export const CHECK_EVERY_MS = 6 * 60 * 60_000;
@@ -37,6 +50,11 @@ export interface UpdateOptions {
    * offered to an x64 Linux machine. Elsewhere the release page opens instead.
    */
   platform?: NodeJS.Platform;
+  /**
+   * Where to check for releases: build configuration's choice by default
+   * (left undefined), or an explicit repo. Null turns checks off.
+   */
+  repo?: string | null;
   load: () => unknown;
   save: (s: Saved) => void;
   fetch?: typeof fetch;
@@ -67,6 +85,11 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
     return r.success ? r.data : { auto: true };
   }
 
+  /** The update source: the caller's choice, else build configuration's. */
+  private updateRepo(): string | null | undefined {
+    return this.o.repo === undefined ? UPDATE_REPO : this.o.repo;
+  }
+
   view(): UpdateView {
     const s = this.saved();
     return {
@@ -82,6 +105,7 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
 
   /** Starts the automatic checks. */
   start(): void {
+    if (!this.updateRepo()) return; // A fork build has no update source to ask.
     const tick = () => {
       if (this.saved().auto) void this.check();
     };
@@ -95,11 +119,12 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
   }
 
   async check(): Promise<UpdateView> {
-    if (this.checking) return this.view();
+    const repo = this.updateRepo();
+    if (this.checking || !repo) return this.view(); // Fork build: nothing to ask.
     this.checking = true;
     this.emit('changed');
     try {
-      const res = await (this.o.fetch ?? fetch)(RELEASES_URL, {
+      const res = await (this.o.fetch ?? fetch)(releasesUrl(repo), {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Vigil-at-Home' },
         signal: AbortSignal.timeout(20_000),
       });
@@ -108,6 +133,7 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
         Releases.parse(await res.json()),
         this.o.current,
         this.o.arch,
+        repo,
         this.o.platform,
       );
       this.error = undefined;
@@ -160,6 +186,7 @@ export function newest(
   raw: unknown[],
   current: string,
   arch: string,
+  repo: string,
   platform: NodeJS.Platform = 'darwin',
 ): UpdateView['available'] | undefined {
   const releases = raw.flatMap((item) => {
@@ -173,7 +200,7 @@ export function newest(
   for (const r of releases) {
     if (r.prerelease && !takePre) continue;
     const version = r.tag_name.replace(/^v/, '');
-    if (!parseVersion(version) || !isGitHub(r.html_url)) continue;
+    if (!parseVersion(version) || !isGitHub(r.html_url, repo)) continue;
     if (compareVersions(version, current) <= 0) continue;
     // A release with nothing to install on this Linux machine isn't an update for it.
     if (platform === 'linux' && !r.assets.some((a) => isLinuxPackage(a.name, arch))) continue;
@@ -183,7 +210,7 @@ export function newest(
   const dmg =
     platform === 'darwin'
       ? best.r.assets.find(
-          (a) => a.name.endsWith(`-${arch}.dmg`) && isGitHub(a.browser_download_url),
+          (a) => a.name.endsWith(`-${arch}.dmg`) && isGitHub(a.browser_download_url, repo),
         )
       : undefined;
   return {
@@ -204,14 +231,14 @@ export function isLinuxPackage(name: string, arch: string): boolean {
   return tags.some((t) => name.endsWith(`-${t}`));
 }
 
-/** Only ever open links to this project's own pages on github.com. */
-function isGitHub(url: string): boolean {
+/** Only ever open links to the update repo's own pages on github.com. */
+function isGitHub(url: string, repo: string): boolean {
   try {
     const u = new URL(url);
     return (
       u.protocol === 'https:' &&
       u.hostname === 'github.com' &&
-      u.pathname.toLowerCase().startsWith('/shmalexm/vigil-at-home/')
+      u.pathname.toLowerCase().startsWith(`/${repo.toLowerCase()}/`)
     );
   } catch {
     return false;
