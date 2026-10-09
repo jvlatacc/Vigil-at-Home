@@ -170,7 +170,9 @@ jobs:
       - name: Node.js and pnpm in the container
         run: |
           docker exec vigil-rhel /bin/bash -euc '
-            dnf install -y git-core nftables procps-ng findutils sudo curl ca-certificates
+            # curl-minimal (in the base image) conflicts with full curl and
+            # already provides the curl binary, so it is not listed here.
+            dnf install -y git-core nftables procps-ng findutils sudo ca-certificates
             curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
             dnf install -y nodejs
             # The major tracks packageManager in package.json (pnpm 10 today).
