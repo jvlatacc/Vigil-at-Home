@@ -146,7 +146,7 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
       } else {
         // REL-01: nothing is offered before its checksums verify. Unsigned
         // releases stay fail-open, logged, until the signing key ships.
-        const verdict = await this.verifyAssets(found.assets);
+        const verdict = await this.verifyAssets(found.assets, repo);
         if (verdict.outcome === 'refused') {
           console.warn(`[updates] ${verdict.reason}`);
           this.available = undefined;
@@ -183,7 +183,7 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
    * or the signing key isn't provisioned yet); 'refused' — the release claims
    * a signature but it doesn't check out, and the update is not offered.
    */
-  private async verifyAssets(assets: ReleaseAssets): Promise<SignatureVerdict> {
+  private async verifyAssets(assets: ReleaseAssets, repo: string): Promise<SignatureVerdict> {
     const sig = assets.find((a) => a.name === MINISIG_NAME);
     if (!sig) return { outcome: 'unsigned' };
     const sums = assets.find((a) => a.name === SUMS_NAME);
@@ -193,10 +193,10 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
         reason: `Update not offered: it has ${MINISIG_NAME} but no ${SUMS_NAME}.`,
       };
     }
-    if (!isGitHub(sums.browser_download_url) || !isGitHub(sig.browser_download_url)) {
+    if (!isGitHub(sums.browser_download_url, repo) || !isGitHub(sig.browser_download_url, repo)) {
       return {
         outcome: 'refused',
-        reason: `Update not offered: its ${SUMS_NAME} is not on the allowlisted github.com URL.`,
+        reason: `Update not offered: its ${SUMS_NAME} is not on the allowlisted github.com release URL.`,
       };
     }
     try {
@@ -318,9 +318,10 @@ export function newest(
   raw: unknown[],
   current: string,
   arch: string,
+  repo: string,
   platform: NodeJS.Platform = 'darwin',
 ): UpdateView['available'] | undefined {
-  return newestRelease(raw, current, arch, platform)?.available;
+  return newestRelease(raw, current, arch, repo, platform)?.available;
 }
 
 /**

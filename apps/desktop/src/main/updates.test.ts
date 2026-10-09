@@ -241,7 +241,6 @@ describe('newest on Linux', () => {
     expect(a?.notesUrl).toMatch(/^https:\/\/github\.com\//);
   });
 });
-
 describe('UpdateChecker verifies release signatures (REL-01)', () => {
   const tag = '0.1.0-alpha.3';
   const base = `https://github.com/ShmalexM/Vigil-at-Home/releases/download/v${tag}`;
@@ -291,6 +290,7 @@ describe('UpdateChecker verifies release signatures (REL-01)', () => {
       const c = new UpdateChecker({
         current: '0.1.0-alpha.2',
         arch: 'arm64',
+        repo: UPSTREAM_REPO,
         load: () => saved,
         save: (s) => void (saved = s),
         fetch: (async (url: string | URL) => {
@@ -406,6 +406,7 @@ describe('UpdateChecker verifies release signatures (REL-01)', () => {
       const c = new UpdateChecker({
         current: '0.1.0-alpha.2',
         arch: 'arm64',
+        repo: UPSTREAM_REPO,
         load: () => ({}),
         save: () => {},
         fetch: (async () => ({
