@@ -20,11 +20,12 @@ import {
   LINUX_OSQUERY_CONFIG_PATH,
   LINUX_OSQUERY_FLAGS_PATH,
   LINUX_OSQUERY_SERVICE,
-  LINUX_OSQUERYD_PATH,
   LINUX_QUERY_NAMES,
+  OSQUERYD_CANDIDATES,
   OSQUERY_RESULTS_LOG,
   osqueryLinuxConfig,
   osqueryLinuxFlags,
+  resolveOsqueryd,
 } from '@vigil/sensors';
 import type { OsqueryState } from './osquery.js';
 import type { System } from './system.js';
@@ -40,7 +41,10 @@ export interface LinuxOsqueryPaths {
 
 export function defaultLinuxOsqueryPaths(): LinuxOsqueryPaths {
   return {
-    osqueryd: LINUX_OSQUERYD_PATH,
+    // Resolved where osqueryd actually is; the fallback is the layout of
+    // osquery's own .deb/.rpm, and callers see "not-installed" if that
+    // doesn't exist either.
+    osqueryd: resolveOsqueryd() ?? OSQUERYD_CANDIDATES[0],
     config: LINUX_OSQUERY_CONFIG_PATH,
     flags: LINUX_OSQUERY_FLAGS_PATH,
     logDir: dirname(OSQUERY_RESULTS_LOG),

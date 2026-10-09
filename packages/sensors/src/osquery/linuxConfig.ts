@@ -12,12 +12,34 @@
 // osquery's Linux package runs osqueryd as the systemd service "osqueryd"
 // with these two files.
 
+import { existsSync } from 'node:fs';
+
 import { QUERY_NAMES } from './config.js';
 
 export const LINUX_OSQUERY_CONFIG_PATH = '/etc/osquery/osquery.conf';
 export const LINUX_OSQUERY_FLAGS_PATH = '/etc/osquery/osquery.flags';
-export const LINUX_OSQUERYD_PATH = '/opt/osquery/bin/osqueryd';
 export const LINUX_OSQUERY_SERVICE = 'osqueryd.service';
+
+/**
+ * Where osqueryd lives, in the order Vigil prefers it: osquery's own .deb and
+ * .rpm put it under /opt, while distribution packages (Arch's extra/osquery,
+ * a future rpm target) put it in /usr/bin. One list for the helper, the app's
+ * checks and sensor health, so they can't disagree about what "installed"
+ * means.
+ */
+export const OSQUERYD_CANDIDATES = [
+  '/opt/osquery/bin/osqueryd', // pkg.osquery.io deb/rpm layout
+  '/usr/bin/osqueryd', // distribution packages
+  '/usr/local/bin/osqueryd', // hand-installed
+] as const;
+
+/** The first candidate that exists, or undefined when none does. */
+export function resolveOsqueryd(
+  candidates: readonly string[] = OSQUERYD_CANDIDATES,
+  exists: (p: string) => boolean = existsSync,
+): string | undefined {
+  return candidates.find(exists);
+}
 
 export const LINUX_QUERY_NAMES = {
   processEvents: 'vigil_process_events',
