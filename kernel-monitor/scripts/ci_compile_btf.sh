@@ -36,12 +36,20 @@ for entry in \
 done
 [[ -s "$idx_all" ]] || { echo "no package index reachable for $suite" >&2; exit 1; }
 
-# Highest-versioned plain amd64 image: bookworm names carry an ABI segment
-# (linux-image-6.1.0-53-amd64), trixie embeds the version
-# (linux-image-6.12.107+deb13-amd64); exclude -dbg/-unsigned/-rt/-cloud
-# flavors. Paragraph records with FS='\n' so field 1 is the Package line.
+# Highest-versioned plain amd64 image whose series matches the requested
+# version: bookworm names carry an ABI segment (linux-image-6.1.0-53-amd64),
+# trixie embeds the version (linux-image-6.12.107+deb13-amd64); exclude
+# -dbg/-unsigned/-rt/-cloud flavors. The series is anchored with a literal
+# dot — "6.1" must match 6.1.0-53 but NOT bookworm's newer 6.12 series —
+# and expected's dots are escaped so they cannot act as regex wildcards.
+# Paragraph records with FS='\n' so field 1 is the Package line.
 pkg=$(awk -v RS= -v FS='\n' -v expected="$expected" '
-	$1 ~ ("^Package: linux-image-" expected "[.0-9+~a-z-]+-amd64$") &&
+	BEGIN {
+		esc = expected
+		gsub(/\./, "\\.", esc)
+		pat = "^Package: linux-image-" esc "[.][.0-9+~a-z-]+-amd64$"
+	}
+	$1 ~ pat &&
 	    $1 !~ /-rt-/ && $1 !~ /-cloud-/ && $1 !~ /-dbg$/ && $1 !~ /-unsigned$/ {
 		ver = ""; file = ""
 		for (i = 2; i <= NF; i++) {
