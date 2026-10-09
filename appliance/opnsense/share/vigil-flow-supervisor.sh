@@ -430,18 +430,21 @@ run_validation_gate() {
 }
 
 build_softflowd_args() {
-  # Pure function (spec sketch): requires CAP_IFACE COLLECTOR_HOST
-  # COLLECTOR_PORT NF_VERSION ACTIVE_TIMEOUT INACTIVE_TIMEOUT MAX_FLOWS
-  # PIDFILE CTLFILE; prints the exact softflowd argv, one argument per line.
-  # Flag mapping verified against softflowd(8): -d foreground, -i interface,
-  # -n collector host:port, -v 9 NetFlow v9 / -v 10 IPFIX, -t name=seconds
-  # timeouts, -m max tracked flows, -p pidfile, -c control socket.
+  # Pure function (spec sketch): requires CAP_IFACE PIDFILE CTLFILE and the
+  # parsed config (CFG_COLLECTOR_HOST CFG_COLLECTOR_PORT CFG_NF_VERSION
+  # CFG_ACTIVE_TIMEOUT CFG_INACTIVE_TIMEOUT CFG_MAX_FLOWS); prints the exact
+  # softflowd argv, one argument per line. Reading the CFG_* values directly
+  # keeps one source of truth — there is no second mapping layer to drift
+  # from what load_config validated. Flag mapping verified against
+  # softflowd(8): -d foreground, -i interface, -n collector host:port,
+  # -v 9 NetFlow v9 / -v 10 IPFIX, -t name=seconds timeouts, -m max tracked
+  # flows, -p pidfile, -c control socket.
   [ -n "${CAP_IFACE:-}" ] || return 1
-  [ -n "${COLLECTOR_HOST:-}" ] || return 1
-  [ -n "${COLLECTOR_PORT:-}" ] || return 1
+  [ -n "${CFG_COLLECTOR_HOST:-}" ] || return 1
+  [ -n "${CFG_COLLECTOR_PORT:-}" ] || return 1
   [ -n "${PIDFILE:-}" ] || return 1
   [ -n "${CTLFILE:-}" ] || return 1
-  case ${NF_VERSION:-} in
+  case ${CFG_NF_VERSION:-} in
     9) _bf_ver=9 ;;
     ipfix) _bf_ver=10 ;;
     *) return 1 ;;
@@ -449,10 +452,10 @@ build_softflowd_args() {
   printf '%s\n' \
     -d \
     -i "$CAP_IFACE" \
-    -n "${COLLECTOR_HOST}:${COLLECTOR_PORT}" \
+    -n "${CFG_COLLECTOR_HOST}:${CFG_COLLECTOR_PORT}" \
     -v "$_bf_ver" \
-    -t "active=${ACTIVE_TIMEOUT}" -t "inactive=${INACTIVE_TIMEOUT}" \
-    -m "$MAX_FLOWS" \
+    -t "active=${CFG_ACTIVE_TIMEOUT}" -t "inactive=${CFG_INACTIVE_TIMEOUT}" \
+    -m "$CFG_MAX_FLOWS" \
     -p "$PIDFILE" -c "$CTLFILE"
 }
 
@@ -628,9 +631,12 @@ EOF
 }
 
 spawn_child() {
-  # $1 = interface. Builds the softflowd argv and launches the child;
-  # sets CHILD_PID on success, returns 1 with VALIDATE_ERROR on failure.
+  # $1 = interface, $2 = consecutive-attempt count (0 on a fresh spawn,
+  # escalating across restarts so the restart bound can exhaust). Builds
+  # the softflowd argv and launches the child; sets CHILD_PID on success,
+  # returns 1 with VALIDATE_ERROR on failure.
   _sc_iface=$1
+  _sc_attempts=${2:-0}
   _sc_pidfile=$(pidfile_for "$_sc_iface")
   _sc_ctlfile=$(ctlfile_for "$_sc_iface")
   rm -f "$_sc_pidfile" "$_sc_ctlfile" 2>/dev/null
@@ -649,9 +655,9 @@ spawn_child() {
   done <<EOF
 $_sc_argv
 EOF
-  "$VIGIL_FLOW_SOFTFLOWD" "$@" &
+  "$VIGIL_FLOW_SOFTFLOWD" "$@" 3<&- 4<&- 5<&- 6<&- 7<&- 8<&- 9<&- &
   CHILD_PID=$!
-  child_set "$_sc_iface" "$CHILD_PID" 0 0
+  child_set "$_sc_iface" "$CHILD_PID" "$_sc_attempts" 0
   return 0
 }
 
@@ -739,7 +745,7 @@ supervise_children() {
     fi
     set_state RESTARTING
     sleep "$(restart_backoff_seconds "$_sc_attempts")"
-    spawn_child "$_sc_iface" || {
+    spawn_child "$_sc_iface" "$_sc_attempts" || {
       degrade "$VALIDATE_ERROR"
       return 0
     }
@@ -811,14 +817,19 @@ supervise_once() {
     supervise_recover
     return 0
   fi
-  # Runtime prerequisites (spec: lost bpf or a vanished interface must be
-  # named in the health file, never run blind).
+  # Runtime prerequisites (spec: lost bpf, a vanished interface, or a
+  # vanished binary must be named in the health file, never run blind).
   assert_bpf_available || {
     stop_all_children
     degrade "$VALIDATE_ERROR"
     return 0
   }
   capture_interfaces_exist || {
+    stop_all_children
+    degrade "$VALIDATE_ERROR"
+    return 0
+  }
+  assert_binaries_available || {
     stop_all_children
     degrade "$VALIDATE_ERROR"
     return 0
@@ -844,9 +855,17 @@ graceful_stop() {
   trap - TERM INT
   stop_all_children
   rm -f "$VIGIL_FLOW_SUPERVISOR_PIDFILE" 2>/dev/null || true
-  STATE=STOPPED
-  write_health
+  mark_stopped_and_write_health
   exit 0
+}
+
+mark_stopped_and_write_health() {
+  # Final truthful record after a stop: no children left, no cause. The ctl
+  # reuses this on the orphan path so stop-state writes stay in one place.
+  CHILDREN=''
+  STATE=STOPPED
+  DEGRADED_CAUSE=''
+  write_health
 }
 
 run_supervisor() {
@@ -854,6 +873,17 @@ run_supervisor() {
   # because an unhandled nonzero must degrade the sensor, not kill it dark.
   set -u
   trap graceful_stop TERM INT
+  # Two supervisors would fight over one softflowd fleet and one health
+  # file — refuse instead of clobbering (ctl start checks too; this is the
+  # backstop for direct `supervisor.sh run` invocations).
+  if [ -f "$VIGIL_FLOW_SUPERVISOR_PIDFILE" ]; then
+    _rs_oldpid=$(cat "$VIGIL_FLOW_SUPERVISOR_PIDFILE" 2>/dev/null) || _rs_oldpid=''
+    case $_rs_oldpid in
+      '' | *[!0-9]*) ;;
+      *) kill -0 "$_rs_oldpid" 2>/dev/null &&
+        die "supervisor already running (pid $_rs_oldpid)" ;;
+    esac
+  fi
   write_supervisor_pidfile
   set_state BOOTING
   # BOOT exits when the config file is found and readable (spec); a missing
