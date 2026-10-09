@@ -295,7 +295,7 @@ describe('UpdateChecker verifies release signatures (REL-01)', () => {
         save: (s) => void (saved = s),
         fetch: (async (url: string | URL) => {
           const u = String(url);
-          if (u.includes('api.github.com')) {
+          if (new URL(u).hostname === 'api.github.com') {
             return { ok: true, status: 200, json: async () => [r] } as never;
           }
           const f = files[u];
