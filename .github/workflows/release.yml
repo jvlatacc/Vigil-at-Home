@@ -14,6 +14,14 @@ name: Release
 #   CSC_LINK, CSC_KEY_PASSWORD        Developer ID Application certificate (.p12, base64) and password
 #   APPLE_API_KEY                     App Store Connect API key (.p8 contents)
 #   APPLE_API_KEY_ID, APPLE_API_ISSUER
+#
+# The checksums can be signed too (audit REL-01). With the repository secret
+# VIGIL_RELEASE_SIGNING_KEY (an ed25519 private key made by
+# scripts/release/generate-signing-key.mjs), the release job signs
+# SHA256SUMS.txt into SHA256SUMS.txt.minisig, which the app verifies before
+# offering an update. Without the secret the sums ship unsigned and the app
+# stays fail-open (logged). test_sign signs with the committed dogfood key
+# instead — pipeline proof only, never a real release.
 
 on:
   workflow_dispatch:
@@ -21,6 +29,11 @@ on:
       version:
         description: Version to release, like 0.1.0 or 0.1.0-alpha.1 (leave empty to only build)
         required: false
+      test_sign:
+        description: Sign checksums with the committed dogfood test key (proof-of-plumbing only)
+        type: boolean
+        required: false
+        default: false
   # Also check packaging whenever the packaging setup changes.
   pull_request:
     paths:
@@ -247,6 +260,32 @@ jobs:
             dist/*.zip
             dist/*.deb
             dist/*.AppImage
+      # REL-01: sign the checksums when the signing key is available, so the
+      # app can verify a release before offering it.
+      - name: Checksum and sign the artifacts
+        env:
+          VIGIL_RELEASE_SIGNING_KEY: ${{ secrets.VIGIL_RELEASE_SIGNING_KEY }}
+          TEST_SIGN: ${{ inputs.test_sign }}
+        run: |
+          (cd dist && sha256sum *.dmg *.zip *.deb *.AppImage > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+          key=""
+          if [[ -n "$VIGIL_RELEASE_SIGNING_KEY" ]]; then
+            key="$RUNNER_TEMP/release-signing-key.pem"
+            printf '%s' "$VIGIL_RELEASE_SIGNING_KEY" > "$key"
+            chmod 600 "$key"
+            echo "Signing SHA256SUMS.txt with the VIGIL_RELEASE_SIGNING_KEY secret."
+          elif [[ "$TEST_SIGN" == "true" ]]; then
+            key=scripts/release/dogfood-signing-key.b64
+            echo "::warning::Signing SHA256SUMS.txt with the committed dogfood test key — this proves the pipeline only, and anyone can reproduce the signature. Never use it for a real release."
+          else
+            echo "::notice::No VIGIL_RELEASE_SIGNING_KEY secret: SHA256SUMS.txt ships unsigned. The app logs and still offers unsigned releases (fail-open) until the key is provisioned — see scripts/release/README.md."
+          fi
+          if [[ -n "$key" ]]; then
+            node scripts/release/sign-checksums.mjs --sums dist/SHA256SUMS.txt --key "$key"
+            cat dist/SHA256SUMS.txt.minisig
+          fi
+
       - name: Draft a GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -258,9 +297,9 @@ jobs:
             echo "::notice::A release for v$VERSION already exists, so no new draft was made."
             exit 0
           fi
-          (cd dist && sha256sum *.dmg *.zip *.deb *.AppImage > SHA256SUMS.txt)
-          cat dist/SHA256SUMS.txt
+          # Sums (and their .minisig, when signed) were made by the previous step.
           flags=(--draft --target "$GITHUB_SHA" --title "Vigil at Home $VERSION" --notes-file .github/release-notes.md)
           [[ "$VERSION" == *-* ]] && flags+=(--prerelease)
-          gh release create "v$VERSION" "${flags[@]}" dist/*.dmg dist/*.zip dist/*.deb dist/*.AppImage \
-            dist/SHA256SUMS.txt
+          assets=(dist/*.dmg dist/*.zip dist/*.deb dist/*.AppImage dist/SHA256SUMS.txt)
+          [[ -f dist/SHA256SUMS.txt.minisig ]] && assets+=(dist/SHA256SUMS.txt.minisig)
+          gh release create "v$VERSION" "${flags[@]}" "${assets[@]}"
