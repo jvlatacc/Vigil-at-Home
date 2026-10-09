@@ -126,9 +126,10 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
       - name: Bats fragment and flag contracts
         run: bats appliance/opnsense/tests
-  # Both container jobs below run the same root integration suite in a distro
+
+  # The container job below runs the same root integration suite in a distro
   # whose /etc/os-release picks a different branch of setup's commands, reusing
-  # scripts/ci/container-integration-tests.sh (the ubuntu job's loop). They are
+  # scripts/ci/container-integration-tests.sh (the ubuntu job's loop). It is
   # privileged so fapolicyd (fanotify) and osquery (eBPF) reach the runner's
   # kernel, and systemd runs as PID 1 for the services the tests install and
   # restart. scripts/validate-linux.sh --self-test also runs here unprivileged
@@ -184,50 +185,10 @@ jobs:
       - name: Root integration tests (dnf family)
         run: docker exec -w /workspace vigil-rhel /bin/bash scripts/ci/container-integration-tests.sh
 
-  linux-debian:
-    # Debian 12 next to the Ubuntu anchor: same apt branch, but an older
-    # fapolicyd (1.1.x) and glibc than the runner's Ubuntu 24.04 — the version
-    # floor the docs must state, exercised rather than asserted. Costs one more
-    # container build; drop this job if it proves flaky for version reasons.
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Start Debian 12 with systemd
-        run: |
-          # Same boot-by-binary-path pattern as the Rocky job above — the
-          # official images ship systemd without the init symlink.
-          docker run -d --name vigil-deb --privileged --cgroupns=host \
-            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
-            debian:bookworm /bin/bash -euc '
-            if [ ! -x /usr/lib/systemd/systemd ]; then
-              apt-get update
-              apt-get install -y systemd
-            fi
-            exec /usr/lib/systemd/systemd --system
-          ' >/dev/null
-          for i in $(seq 1 60); do
-            s=$(docker exec vigil-deb systemctl is-system-running 2>/dev/null || true)
-            case "$s" in running | degraded) break ;; esac
-            sleep 2
-          done
-          if ! docker exec vigil-deb systemctl is-system-running; then
-            docker logs vigil-deb | tail -50
-            exit 1
-          fi
-      - name: Node.js and pnpm in the container
-        run: |
-          docker exec vigil-deb /bin/bash -euc '
-            apt-get update
-            apt-get install -y curl ca-certificates git nftables procps sudo
-            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-            apt-get install -y nodejs
-            # The major tracks packageManager in package.json (pnpm 10 today).
-            npm install -g pnpm@10
-            git config --global --add safe.directory /workspace
-          '
-      - name: Install dependencies
-        run: docker exec -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -w /workspace vigil-deb pnpm install --frozen-lockfile
-      - name: Root integration tests (Debian 12)
-        run: docker exec -w /workspace vigil-deb /bin/bash scripts/ci/container-integration-tests.sh
+  # No Debian 12 container job: fapolicyd 1.1.7 cannot open its trust database
+  # inside this container tier ("open_dbi: Permission denied" from the daemon's
+  # own journal, linux-debian on run 37973689485), so it never reports
+  # enforcing and the enforcing check can never pass there. The Debian-family
+  # floor for blocking is fapolicyd 1.3+ — Ubuntu 24.04 above, Debian 13 —
+  # and Debian 12 stays on the documented manual tier.
+  # See design/linux-validation-routines.md.

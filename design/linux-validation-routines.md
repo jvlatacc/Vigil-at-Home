@@ -17,7 +17,9 @@ works. This design adds two instruments:
    installed Vigil works on the machine it runs on, auto-detecting the distro
    family from `/etc/os-release`. CI-usable and human-usable.
 2. **CI container jobs** — the same root integration suite on Rocky Linux 9
-   (dnf family) and Debian 12, next to the Ubuntu anchor.
+   (dnf family), next to the Ubuntu anchor. A Debian 12 container job was
+   tried and removed; see ["Why there is no Debian 12 container
+   job"](#why-there-is-no-debian-12-container-job).
 
 The routine is also the instrument that would surface a failure of the spec's
 load-bearing assumption — that CI on GitHub runners can stand in for
@@ -88,11 +90,11 @@ root check, known family demands root.
 
 From the validation matrix (GA §5.1):
 
-| Tier | What runs                                                                                                         | Where                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| A    | Full root integration suite on Ubuntu 24.04 (nftables, fapolicyd 1.3.x enforcement, osquery eBPF, helper install) | `ci.yml` `linux` job — unchanged, the anchor                                          |
-| B    | Same suite on Rocky Linux 9 (dnf, fapolicyd 1.4.x) and Debian 12 (apt, fapolicyd 1.1.x)                           | `ci.yml` `linux-dnf` and `linux-debian` container jobs (privileged, systemd as PID 1) |
-| C/D  | SELinux-enforcing RHEL, real-desktop flows (tray, popups, pkexec dialogs), Arch/Omarchy                           | manual — the routine is the documented way to run them on real hardware               |
+| Tier | What runs                                                                                                         | Where                                                                   |
+| ---- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| A    | Full root integration suite on Ubuntu 24.04 (nftables, fapolicyd 1.3.x enforcement, osquery eBPF, helper install) | `ci.yml` `linux` job — unchanged, the anchor                            |
+| B    | Same suite on Rocky Linux 9 (dnf, fapolicyd 1.4.x)                                                                | `ci.yml` `linux-dnf` container job (privileged, systemd as PID 1)       |
+| C/D  | SELinux-enforcing RHEL, real-desktop flows (tray, popups, pkexec dialogs), Arch/Omarchy, Debian 12                | manual — the routine is the documented way to run them on real hardware |
 
 The container jobs run the same six integration files via
 `scripts/ci/container-integration-tests.sh`; no test changes were expected
@@ -109,6 +111,33 @@ while testing nothing. The fix detects the family and passes it through, so
 Ubuntu keeps running the apt branch and Rocky runs the dnf branch
 (`debian:bookworm` the apt branch again). The other five integration files
 have no distro gate.
+
+### Why there is no Debian 12 container job
+
+A Debian 12 (`debian:bookworm`) container job was part of the first push, and
+its failure is the useful kind — the kind the container tier exists to catch.
+fapolicyd 1.1.7 never reached enforcing in the container, first with the
+original 30 s wait and again with a 2 min wait: the daemon's own journal
+(dumped by `scripts/ci/container-integration-tests.sh` on failure) shows
+
+```
+fapolicyd[5633]: Loading trust data from file backend
+fapolicyd[5633]: Permission denied
+fapolicyd[5633]: open_dbi:Permission denied
+fapolicyd[5633]: The size obtained by get_pages_in_use() was 0.
+```
+
+fapolicyd 1.1.7 cannot open its trust database inside this container tier, so
+`fapolicyd-cli --check-status` never reports enforcing no matter how long the
+test waits (observed across ~28 min of daemon uptime). The container-level
+why (what denies root a db open that works on the Debian 13 sandbox and
+Ubuntu 24.04's 1.3.x) is undetermined — the job was removed rather than
+carried as permanently red. The spec allowed exactly this: the Debian 12 job
+was to be added "only if it costs little", and a never-green check costs
+more than it validates. Debian 12 moves to the manual tier: on real hardware
+the routine's fapolicyd check decides, and the version floor for the
+enforcing check is fapolicyd 1.3+ (Ubuntu 24.04, Debian 13) — content D3's
+getting-started document carries.
 
 ## Acceptance criteria (Spec D2)
 
