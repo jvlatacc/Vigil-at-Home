@@ -159,7 +159,10 @@ jobs:
             rockylinux:9@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 \
             /bin/bash -euc '
             if [ ! -x /usr/lib/systemd/systemd ]; then
-              dnf install -y systemd
+              # BaseOS-only: the other repos' metadata fetches were the silent
+              # stall point (boot hung twice with no dnf output at all); systemd
+              # comes from BaseOS alone.
+              dnf install -y --disablerepo="*" --enablerepo=baseos --setopt=timeout=30 --setopt=retries=10 systemd
             fi
             exec /usr/lib/systemd/systemd --system
           ' >/dev/null
@@ -167,7 +170,7 @@ jobs:
           # image has no systemd until the install above finishes, so a
           # systemctl probe fails with "executable file not found" for the
           # whole cold-install window.
-          for i in $(seq 1 90); do
+          for i in $(seq 1 240); do
             s=$(docker exec vigil-rhel /bin/bash -c 'test -d /run/systemd/system && systemctl is-system-running 2>/dev/null || true')
             case "$s" in running | degraded) break ;; esac
             sleep 2
