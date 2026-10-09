@@ -157,6 +157,11 @@ jobs:
           # throttling of GitHub-runner egress IPs timed out the auth-token
           # fetch twice in a row; quay is Rocky's own registry mirror.
           docker run -d --name vigil-rhel --privileged --cgroupns=host \
+            # --privileged does not unconfine AppArmor: the Ubuntu runner's
+            # policy denies unix_chkpwd (and even root's chmod) the
+            # cap_dac_override inside the container, which is what broke
+            # sudo's PAM account check (rocky sig#56). Unconfine explicitly.
+            --security-opt apparmor=unconfined \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
             quay.io/rockylinux/rockylinux:9@sha256:8101994123cf3d0a8fee517bee7f39e555c7d92bd2d9eb3303cc988a0eeed00f \
@@ -199,8 +204,11 @@ jobs:
             # 000 file needs — sudo's PAM account check then fails with
             # "Authentication service cannot retrieve authentication info"
             # (rocky-linux/sig-cloud-instance-images#56). Owner-read fixes it
-            # for this disposable test container.
-            chmod 0400 /etc/shadow
+            # for this disposable test container. Never fatal: if the chmod
+            # itself is denied (it returned EPERM once in the booted
+            # container), record the mode and let the apparmor=unconfined
+            # flag above carry the fix instead.
+            chmod 0400 /etc/shadow || stat -c 'chmod failed; shadow mode: %a' /etc/shadow
           '
       - name: Install dependencies
         run: docker exec -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -w /workspace vigil-rhel pnpm install --frozen-lockfile

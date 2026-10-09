@@ -179,13 +179,23 @@ info`. The image ships `/etc/shadow` as mode 000 (no read for anyone — the
 old hub build was rescued incidentally by a shadow-utils upgrade whose
 post-install reset the mode), and on the Ubuntu runner's AppArmor the kernel
 denies `unix_chkpwd` the `cap_dac_override` that reading a 000 file needs,
-so the PAM account check fails even for root. The fix is the community-
-confirmed one from rocky-linux/sig-cloud-instance-images#56 and
-geerlingguy/docker-rockylinux9-ansible#6: `chmod 0400 /etc/shadow` after the
-dnf installs — owner-read needs no dac_override. Both upstream reports note
+so the PAM account check fails even for root. The first fix attempt — the
+community-confirmed `chmod 0400 /etc/shadow` (rocky sig#56,
+geerlingguy/docker-rockylinux9-ansible#6) — failed on its own CI run:
+root's chmod returned EPERM inside the _booted_ privileged container. That
+EPERM could not be reproduced offline (the identical chmod succeeds in
+plain podman runs of the same digest, with the job's exact flags, and
+after the same dnf transaction; no immutable attribute pre-boot), and the
+dev sandbox cannot boot systemd as PID 1 to chase the residual state. The
+shipped fix is `--security-opt apparmor=unconfined` on the container —
+`--privileged` does not unconfine AppArmor, and the runner's policy denies
+`unix_chkpwd` (and even root's chmod) the `cap_dac_override` inside
+containers — which repairs the PAM read without touching the shadow file.
+The chmod stays as a non-fatal mode fix with a `stat` fallback that
+records the mode if it is ever denied again. Both upstream reports note
 the failure is not reproducible off Ubuntu hosts, which matches this
-investigation: the identical sequence ran clean under podman on a Debian 13
-sandbox.
+investigation: the identical sequence ran clean under podman on a Debian
+13 sandbox.
 
 ### The Rocky kill-path finding — the container tier's first catch
 
