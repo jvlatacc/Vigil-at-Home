@@ -66,3 +66,28 @@ jobs:
           for f in "${files[@]}"; do
             sudo -E env "PATH=$PATH" VIGIL_LINUX_INTEGRATION=1 pnpm vitest run "$f"
           done
+
+  kernel-monitor:
+    # The eBPF kernel monitor (kernel-monitor/): run its host-runnable C tests
+    # and compile the CO-RE object against the Debian 12 (6.1) and Debian 13
+    # (6.12) kernel BTFs. Loading and attaching the programs needs a real
+    # Debian kernel with privileges, which hosted CI cannot provide — that
+    # runtime check stays VM-pending (see kernel-monitor/README.md).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm gcc make cmake libbpf-dev bpftool \
+            zstd xz-utils bzip2 gzip
+      - name: Host unit tests (ctest)
+        run: make -C kernel-monitor test
+      - name: Verifier pre-check
+        run: kernel-monitor/scripts/run_verifier_check.sh
+      - name: CO-RE compile against Debian 12 (6.1) kernel BTF
+        run: kernel-monitor/scripts/ci_compile_btf.sh bookworm 6.1
+      - name: CO-RE compile against Debian 13 (6.12) kernel BTF
+        run: kernel-monitor/scripts/ci_compile_btf.sh trixie 6.12
