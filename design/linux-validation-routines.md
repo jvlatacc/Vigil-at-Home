@@ -140,6 +140,25 @@ the routine's fapolicyd check decides, and the version floor for the
 enforcing check is fapolicyd 1.3+ (Ubuntu 24.04, Debian 13) — content D3's
 getting-started document carries.
 
+### Container boot hardening — mirror variance is the residual failure mode
+
+The digest pin freezes image _content_; it cannot freeze Rocky's _mirror
+infrastructure_. Boot failed twice on the identical pinned digest with two
+different stall signatures — once with the BaseOS download still in flight
+when the 180 s wait expired, once with dnf producing no output at all (a
+silent mirrorlist/metadata stall) — sandwiching two clean boots. The
+hardening: the cold install now reads `dnf install -y --disablerepo="*"
+--enablerepo=baseos --setopt=timeout=30 --setopt=retries=10 systemd` and the
+wait budget is 240×2 s. BaseOS-only is the load-bearing change: run 3's log
+showed systemd coming from BaseOS, so the appstream/extras metadata fetches
+were non-load-bearing stall surface, now removed. The explicit timeout/retry
+bounds document the failure mode and guard against base-image dnf.conf
+overrides (dnf's stock defaults are reportedly the same 30 s/10 values —
+training knowledge, not verified this session — so expect the flags to be
+insurance, not a behavior change). If boot still fails on more than 1 of the
+next 4 runs, the next move is baking the systemd install into an image layer
+built in the job, not another parameter tweak.
+
 ### The Rocky kill-path finding — the container tier's first catch
 
 This is the finding the spec's load-bearing assumption said these jobs would
