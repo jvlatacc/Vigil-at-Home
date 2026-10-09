@@ -310,6 +310,10 @@ describe('Store: who reads arguments', () => {
     const bad: string[] = [];
     for (const f of files) {
       if (f.endsWith(join('db', 'store.ts'))) continue;
+      // The soc-export MCP pull server reads event bodies read-only, in its
+      // own process, zod-validated and redacted at the tool boundary — it
+      // never feeds the arg dictionary.
+      if (f.includes(join('packages', 'soc-export', 'src', 'mcp'))) continue;
       const text = readFileSync(f, 'utf8');
       for (const m of text.matchAll(/SELECT\s+([\s\S]*?)\s+FROM\s+events\b/g)) {
         const cols = m[1]!.replace(/json_extract\([^)]*\)/g, '');
