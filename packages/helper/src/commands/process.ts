@@ -7,7 +7,7 @@ import { insideInstalledRoot, selfRoots, underSelfRoot } from '@vigil/core/self'
 import type { System } from '../system.js';
 import type { Platform } from '../platform.js';
 import { protectionFor } from '../config.js';
-import { ActionError } from './errors.js';
+import { ActionError, PidReused } from './errors.js';
 import { runsFromSelfImage } from './selfImage.js';
 
 export interface ProcessIdentity {
@@ -126,6 +126,25 @@ async function checkTarget(
   return id;
 }
 
+/**
+ * After the signal, make sure the pid still answers as the process that was
+ * checked. The pid gone (or still there as itself, dying) is what a delivered
+ * signal looks like; the pid running other code means it was reused in the
+ * instant between check and signal, and the signal may have hit that other
+ * process. No platform offers a signal-by-identity, so a reuse inside that
+ * same instant stays invisible (the new process is not yet visible to ps, or
+ * starts within the same second at the same path) — this narrows the window
+ * to a syscall, it does not close it.
+ */
+async function confirmUnchanged(sys: System, pid: number, before: ProcessIdentity): Promise<void> {
+  const after = await identifyProcess(sys, pid);
+  if (!after) return;
+  if (after.path === before.path && after.started === before.started) return;
+  throw new PidReused(
+    `pid ${pid} was reused for ${after.path} (started ${after.started}); the signal may have hit it`,
+  );
+}
+
 export async function suspendProcess(
   sys: System,
   pid: number,
@@ -133,6 +152,7 @@ export async function suspendProcess(
 ): Promise<ProcessIdentity> {
   const id = await checkTarget(sys, pid, expect);
   sys.signal(pid, 'SIGSTOP');
+  await confirmUnchanged(sys, pid, id);
   return id;
 }
 
@@ -143,5 +163,6 @@ export async function killProcess(
 ): Promise<ProcessIdentity> {
   const id = await checkTarget(sys, pid, expect);
   sys.signal(pid, 'SIGKILL');
+  await confirmUnchanged(sys, pid, id);
   return id;
 }

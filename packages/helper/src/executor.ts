@@ -23,7 +23,7 @@ import type { PreexecSync } from './preexec.js';
 import { APPROVAL_TTL_MS, type Approvals } from './approval.js';
 import { pinnedHashes, runsPinnedApp, type PinCandidate } from './appPin.js';
 import type { AppPinStore } from './pinStore.js';
-import { ActionError } from './commands/errors.js';
+import { ActionError, PidReused } from './commands/errors.js';
 import {
   identifyProcess,
   killProcess,
@@ -402,6 +402,31 @@ export class Executor {
     return this.record(cmd, summary);
   }
 
+  /**
+   * Run a command that signals a checked process. One whose pid was reused
+   * between the check and the signal may have hit another process: the
+   * journal records what was found (state 'final': there is nothing to
+   * reverse), and the refusal goes back to the app as the command's result.
+   */
+  private async signaled(
+    cmd: HelperAction,
+    signal: () => Promise<ProcessIdentity>,
+  ): Promise<ProcessIdentity> {
+    try {
+      return await signal();
+    } catch (err) {
+      if (err instanceof PidReused)
+        this.d.journal.add({
+          id: Journal.newId(),
+          kind: cmd.kind,
+          command: cmd,
+          state: 'final',
+          summary: err.message,
+        });
+      throw err;
+    }
+  }
+
   private async run(cmd: HelperCommand): Promise<unknown> {
     const { sys, journal } = this.d;
     if (cmd.kind === 'santa.rule.set' && cmd.policy !== 'allow') {
@@ -413,11 +438,13 @@ export class Executor {
     if (sys.platform === 'linux' && cmd.kind.startsWith('santa.')) return this.runLinuxBlock(cmd);
     switch (cmd.kind) {
       case 'process.suspend': {
-        const id = await suspendProcess(sys, cmd.pid, {
-          ...target(cmd),
-          self: this.self(),
-          ...this.pinCheck(),
-        });
+        const id = await this.signaled(cmd, () =>
+          suspendProcess(sys, cmd.pid, {
+            ...target(cmd),
+            self: this.self(),
+            ...this.pinCheck(),
+          }),
+        );
         return this.record(cmd, `paused ${id.path} (pid ${id.pid})`, { process: id });
       }
       case 'process.resume': {
@@ -435,11 +462,13 @@ export class Executor {
         );
       }
       case 'process.kill': {
-        const id = await killProcess(sys, cmd.pid, {
-          ...target(cmd),
-          self: this.self(),
-          ...this.pinCheck(),
-        });
+        const id = await this.signaled(cmd, () =>
+          killProcess(sys, cmd.pid, {
+            ...target(cmd),
+            self: this.self(),
+            ...this.pinCheck(),
+          }),
+        );
         for (const e of journal.active()) {
           if (e.kind === 'process.suspend' && (e.undo?.process as ProcessIdentity).pid === id.pid)
             journal.markUndone(e.id);
