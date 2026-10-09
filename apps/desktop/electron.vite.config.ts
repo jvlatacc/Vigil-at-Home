@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'electron-vite';
 import { thirdPartyLicenses } from './scripts/third-party-licenses.mjs';
+import { resolveUpdateRepo } from './src/main/update-repo.js';
 
 // Everything the app imports is a devDependency and gets bundled, so the packaged
 // app ships only `out/` and no node_modules. A package that must stay external
@@ -21,9 +22,27 @@ function buildCommit(): string {
   }
 }
 
+/**
+ * The repo this build checks for updates (update-repo.ts decides): an explicit
+ * VIGIL_UPDATE_REPO wins, an upstream checkout checks upstream, a fork checkout
+ * ships with update checks off.
+ */
+function buildUpdateRepo(): string | null {
+  let origin: string | undefined;
+  try {
+    origin = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim();
+  } catch {
+    // No git checkout (a source tarball): resolveUpdateRepo defaults to upstream.
+  }
+  return resolveUpdateRepo(process.env['VIGIL_UPDATE_REPO'], origin) ?? null;
+}
+
 export default defineConfig({
   main: {
-    define: { __VIGIL_COMMIT__: JSON.stringify(buildCommit()) },
+    define: {
+      __VIGIL_COMMIT__: JSON.stringify(buildCommit()),
+      __VIGIL_UPDATE_REPO__: JSON.stringify(buildUpdateRepo()),
+    },
     plugins: [thirdPartyLicenses('main')],
   },
   preload: {
