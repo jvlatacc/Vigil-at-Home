@@ -8,6 +8,7 @@ import {
   MemoryFeedStateStore,
   parseFeed,
   type FeedSource,
+  type FeedStateStore,
   type FetchLike,
 } from '../feeds/index.js';
 import { macosCoreRules } from '../packs/macos-core.js';
@@ -136,7 +137,7 @@ describe('FeedImporter', () => {
       [src({ id: 'a', url: 'https://a.test/ips' }), src({ id: 'b', url: 'https://b.test/ips' })],
       stores.lists,
       new MemoryFeedStateStore(),
-      { fetch, now: () => now },
+      { fetch, now: () => now, confirmWindowMs: 0 },
     );
     const first = await imp.run();
     expect(first.map((r) => r.status)).toEqual(['updated', 'updated']);
@@ -180,7 +181,7 @@ describe('FeedImporter', () => {
       [src({ id: 'a', url: 'https://a.test/ips' })],
       stores.lists,
       new MemoryFeedStateStore(),
-      { fetch },
+      { fetch, confirmWindowMs: 0 },
     );
     await imp.run({ force: true });
     const r = await imp.run({ force: true });
@@ -198,7 +199,7 @@ describe('FeedImporter', () => {
       [src({ id: 'a', url: 'https://a.test/ips' })],
       stores.lists,
       new MemoryFeedStateStore(),
-      { fetch },
+      { fetch, confirmWindowMs: 0 },
     );
     await imp.run({ force: true });
     body = '<html>maintenance</html>';
@@ -215,7 +216,11 @@ describe('FeedImporter', () => {
       [src({ id: 'k', url: 'https://k.test/ips', auth: { key: 'abusech', header: 'Auth-Key' } })],
       stores.lists,
       new MemoryFeedStateStore(),
-      { fetch, keys: (name) => (name === 'abusech' ? 'user-key-0123456789' : undefined) },
+      {
+        fetch,
+        keys: (name) => (name === 'abusech' ? 'user-key-0123456789' : undefined),
+        confirmWindowMs: 0,
+      },
     );
     expect((await imp.run())[0]).toMatchObject({ status: 'updated', entries: 1 });
     expect(calls[0]!.headers['Auth-Key']).toBe('user-key-0123456789');
@@ -228,7 +233,7 @@ describe('FeedImporter', () => {
         [src({ id: 'k', url, auth: { key: 'abusech', header: 'Auth-Key' } })],
         memoryStores().lists,
         new MemoryFeedStateStore(),
-        { fetch, keys: () => 'user-key-0123456789' },
+        { fetch, keys: () => 'user-key-0123456789', confirmWindowMs: 0 },
       );
 
     it('follows a same-origin https redirect and sends the key on each hop', async () => {
@@ -300,7 +305,7 @@ describe('FeedImporter', () => {
       [src({ id: 'k', url: 'https://k.test/ips', auth: { key: 'abusech', header: 'Auth-Key' } })],
       memoryStores().lists,
       new MemoryFeedStateStore(),
-      { fetch, keys: () => undefined },
+      { fetch, keys: () => undefined, confirmWindowMs: 0 },
     );
     expect((await imp.run())[0]).toMatchObject({ status: 'updated', entries: 1 });
     expect(calls).toHaveLength(1);
@@ -328,7 +333,7 @@ describe('FeedImporter', () => {
         ],
         stores.lists,
         state,
-        { fetch, keys: () => key, now: () => now },
+        { fetch, keys: () => key, now: () => now, confirmWindowMs: 0 },
       );
       await imp.run();
       expect(stores.lists.size('known_bad_ips')).toBe(101);
@@ -425,7 +430,7 @@ describe('FeedImporter', () => {
         [src({ id: 'a', url: 'https://a.test/ips' })],
         stores.lists,
         new MemoryFeedStateStore(),
-        { fetch },
+        { fetch, confirmWindowMs: 0 },
       );
       expect((await imp.run({ force: true }))[0]!.status).toBe('updated');
       expect(stores.lists.size('known_bad_ips')).toBe(seed);
@@ -481,7 +486,7 @@ describe('FeedImporter', () => {
       [src({ id: 'h', url: 'https://h.test/recent', list: 'known_bad_sha256', retainDays: 30 })],
       stores.lists,
       new MemoryFeedStateStore(),
-      { fetch, now: () => now },
+      { fetch, now: () => now, confirmWindowMs: 0 },
     );
     await imp.run();
     body = sha('b');
@@ -536,7 +541,7 @@ describe('FeedImporter', () => {
       ],
       stores.lists,
       new MemoryFeedStateStore(),
-      { fetch },
+      { fetch, confirmWindowMs: 0 },
     ).run();
     const engine = new DetectionEngine(macosCoreRules, stores);
     const tool = proc({ path: '/Users/alex/Downloads/tool', pid: 4242, signing: 'unsigned' });
@@ -559,6 +564,7 @@ describe('FeedImporter', () => {
     const s1 = sqliteStores(db);
     await new FeedImporter([src({ id: 'a', url: 'https://a.test/ips' })], s1.lists, s1.feeds, {
       fetch,
+      confirmWindowMs: 0,
     }).run();
     const s2 = sqliteStores(db);
     expect(s2.feeds.get('a')).toMatchObject({
@@ -584,5 +590,207 @@ describe('FeedImporter', () => {
       'malwarebazaar-recent',
     ]);
     for (const f of DEFAULT_FEEDS) expect(f.headers).toBeUndefined();
+  });
+});
+
+describe('pending window and growth guard', () => {
+  /** One /24 block of listable IPs: block(0, 10) → 45.9.0.1 … 45.9.0.10. */
+  const block = (o: number, n: number) =>
+    Array.from({ length: n }, (_, i) => `45.9.${o}.${i + 1}`).join('\n');
+
+  const hashImporter = (
+    lists: ReturnType<typeof memoryStores>['lists'],
+    state: FeedStateStore,
+    fetch: FetchLike,
+    now: () => number,
+  ) =>
+    new FeedImporter(
+      [src({ id: 'h', url: 'https://h.test/hashes', list: 'known_bad_sha256' })],
+      lists,
+      state,
+      { fetch, now },
+    );
+
+  it('holds a brand-new hash until the window passes, then the sweep promotes it', async () => {
+    const { fetch } = fakeFetch({ 'https://h.test/hashes': () => ({ body: sha('a') }) });
+    let now = T0;
+    const stores = memoryStores();
+    const imp = hashImporter(stores.lists, new MemoryFeedStateStore(), fetch, () => now);
+
+    const r = (await imp.run())[0]!;
+    expect(r).toMatchObject({ status: 'updated', entries: 0, added: 1 });
+    // Nothing reached the list the helper enforces.
+    expect(stores.lists.size('known_bad_sha256')).toBe(0);
+    expect(imp.status()[0]).toMatchObject({ entries: 0, pending: 1 });
+
+    // Still held inside the window, however often the feed repeats itself —
+    // and the first listing, not the latest one, starts the clock.
+    now += 23 * HOUR;
+    await imp.run({ force: true });
+    expect(stores.lists.size('known_bad_sha256')).toBe(0);
+
+    now += 2 * HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated', entries: 1 });
+    expect(stores.lists.has('known_bad_sha256', sha('a'))).toBe(true);
+    expect(imp.status()[0]).toMatchObject({ entries: 1 });
+    expect(imp.status()[0]!.pending).toBeUndefined();
+  });
+
+  it('lets entries the feed already listed straight in and holds only new ones', async () => {
+    let body = sha('a');
+    const { fetch } = fakeFetch({ 'https://h.test/hashes': () => ({ body }) });
+    let now = T0;
+    const stores = memoryStores();
+    const imp = hashImporter(stores.lists, new MemoryFeedStateStore(), fetch, () => now);
+
+    await imp.run();
+    expect(stores.lists.size('known_bad_sha256')).toBe(0);
+
+    // Once a's window has passed it enforces, while the newer b waits its own.
+    body = `${sha('a')}\n${sha('b')}`;
+    now += 25 * HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated', entries: 1 });
+    expect(stores.lists.has('known_bad_sha256', sha('a'))).toBe(true);
+    expect(stores.lists.has('known_bad_sha256', sha('b'))).toBe(false);
+    expect(imp.status()[0]!.pending).toBe(1);
+
+    now += DAY;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated', entries: 2 });
+    expect(stores.lists.has('known_bad_sha256', sha('b'))).toBe(true);
+  });
+
+  it('alerts when a promotion more than doubles the active set, then clears', async () => {
+    let body = block(0, 10);
+    const { fetch } = fakeFetch({ 'https://h.test/ips': () => ({ body }) });
+    let now = T0;
+    const stores = memoryStores();
+    const imp = new FeedImporter(
+      [src({ id: 'h', url: 'https://h.test/ips' })],
+      stores.lists,
+      new MemoryFeedStateStore(),
+      { fetch, now: () => now },
+    );
+
+    await imp.run(); // the feed's first listing: ten held entries
+    // A first fill is free: there was nothing to double.
+    now += DAY + HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated', entries: 10 });
+    expect(imp.status()[0]!.growthAlert).toBeUndefined();
+
+    // Twenty-five more wait out their window, then promote in one go: 10 → 35.
+    body = `${block(0, 10)}\n${block(1, 25)}`;
+    now += HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated', entries: 10 });
+    expect(imp.status()[0]!.pending).toBe(25);
+
+    now += DAY + HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated', entries: 35 });
+    expect(imp.status()[0]!.growthAlert).toBe(true);
+
+    // The next accepted update clears the alert, as it clears the shrink hold.
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated' });
+    expect(imp.status()[0]!.growthAlert).toBeUndefined();
+  });
+
+  it('stays quiet while growth stays within the ratio', async () => {
+    let body = block(0, 10);
+    const { fetch } = fakeFetch({ 'https://h.test/ips': () => ({ body }) });
+    let now = T0;
+    const stores = memoryStores();
+    const imp = new FeedImporter(
+      [src({ id: 'h', url: 'https://h.test/ips' })],
+      stores.lists,
+      new MemoryFeedStateStore(),
+      { fetch, now: () => now },
+    );
+
+    await imp.run();
+    now += DAY + HOUR;
+    await imp.run({ force: true }); // first fill: 10 active
+    body = `${block(0, 10)}\n${block(1, 5)}`;
+    now += HOUR;
+    await imp.run({ force: true }); // 5 more wait out their window
+    now += DAY + HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'updated', entries: 15 });
+    expect(imp.status()[0]!.growthAlert).toBeUndefined();
+  });
+
+  it('promotes held entries even while their feed is failing', async () => {
+    let status = 200;
+    const { fetch } = fakeFetch({
+      'https://h.test/hashes': () => ({ status, body: status === 200 ? sha('a') : 'down' }),
+    });
+    let now = T0;
+    const stores = memoryStores();
+    const imp = hashImporter(stores.lists, new MemoryFeedStateStore(), fetch, () => now);
+
+    await imp.run(); // held pending
+    status = 500;
+    now += DAY + HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({ status: 'failed' });
+    // The window had passed, so the entry enforces anyway.
+    expect(stores.lists.has('known_bad_sha256', sha('a'))).toBe(true);
+    expect(imp.status()[0]!.pending).toBeUndefined();
+  });
+
+  it('drops a held entry its feed retracts before the window passed', async () => {
+    let body = sha('a');
+    const { fetch } = fakeFetch({ 'https://h.test/hashes': () => ({ body }) });
+    let now = T0;
+    const stores = memoryStores();
+    const state = new MemoryFeedStateStore();
+    const imp = hashImporter(stores.lists, state, fetch, () => now);
+
+    await imp.run(); // a held pending
+    body = sha('b');
+    now += HOUR;
+    expect((await imp.run({ force: true }))[0]).toMatchObject({
+      status: 'updated',
+      entries: 0,
+      added: 1,
+    });
+    // A replace-mode feed that stops listing an entry speaks: a was retracted
+    // before it could enforce anything, and b restarts the window from now.
+    expect(state.get('h')?.pending).toEqual({ [sha('b')]: T0 + HOUR });
+  });
+
+  it('keeps the shrink guard and pending entries working together', async () => {
+    let body = block(0, 10);
+    const { fetch } = fakeFetch({ 'https://h.test/ips': () => ({ body }) });
+    let now = T0;
+    const stores = memoryStores();
+    const imp = new FeedImporter(
+      [src({ id: 'h', url: 'https://h.test/ips' })],
+      stores.lists,
+      new MemoryFeedStateStore(),
+      { fetch, now: () => now },
+    );
+
+    await imp.run(); // 10 pending
+    now += DAY + HOUR;
+    await imp.run({ force: true }); // promoted: 10 active, first fill
+    body = `${block(0, 10)}\n${block(1, 5)}`;
+    now += HOUR;
+    await imp.run({ force: true }); // 5 more held pending
+    body = block(0, 1); // the feed collapses
+    now += HOUR;
+    const r = (await imp.run({ force: true }))[0]!;
+    expect(r).toMatchObject({ status: 'failed' });
+    expect(r.error).toMatch(/shrank from 10 to 1/);
+    expect(imp.status()[0]).toMatchObject({ heldBack: true, entries: 10, pending: 5 });
+    expect(stores.lists.size('known_bad_ips')).toBe(10);
+  });
+
+  it('keeps pending entries across a restart', async () => {
+    const db = new DatabaseSync(':memory:') as unknown as SqlDatabase;
+    const { fetch } = fakeFetch({ 'https://h.test/hashes': () => ({ body: sha('a') }) });
+    const s1 = sqliteStores(db);
+    await hashImporter(s1.lists, s1.feeds, fetch, Date.now).run();
+    expect(s1.lists.size('known_bad_sha256')).toBe(0);
+
+    // A fresh store over the same database sees the held entry, still held.
+    const s2 = sqliteStores(db);
+    expect(s2.feeds.get('h')?.pending).toEqual({ [sha('a')]: expect.any(Number) });
+    expect(s2.lists.size('known_bad_sha256')).toBe(0);
   });
 });
