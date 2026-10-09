@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       'apps/desktop/build/**',
+      'kernel-monitor/build/**',
     ],
   },
   js.configs.recommended,
