@@ -108,7 +108,7 @@ export function dpkgSource(infoDir = DPKG_INFO_DIR, status = DPKG_STATUS): Packa
 
 /**
  * rpm (Fedora, RHEL, openSUSE). Its database is binary, so the listing comes
- * from `rpm -qa --qf '[%{FILENAMES}\t%{NAME}\n]'`, run by the caller (the
+ * from `rpm -qa --qf '%{NAME}\t[%{FILENAMES}\n]'`, run by the caller (the
  * helper owns process execution).
  */
 export function rpmSource(
@@ -129,9 +129,19 @@ export function rpmSource(
     *load() {
       const text = list();
       if (!text) return;
+      // The listing's shape is `NAME\t[FILE\n]`: each package prints its name
+      // once, tab, then its files one per line. A scalar (NAME) inside the
+      // iterator with FILENAMES makes el9's rpm fail with "array iterator
+      // used with different sized arrays", so NAME stays outside it.
+      let pkg: string | undefined;
       for (const line of text.split('\n')) {
         const tab = line.indexOf('\t');
-        if (tab > 0) yield [line.slice(0, tab), line.slice(tab + 1)];
+        if (tab > 0) {
+          pkg = line.slice(0, tab);
+          if (tab + 1 < line.length) yield [line.slice(tab + 1), pkg];
+        } else if (pkg && line) {
+          yield [line, pkg];
+        }
       }
     },
   };
