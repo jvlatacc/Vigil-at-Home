@@ -81,8 +81,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang llvm gcc make cmake libbpf-dev bpftool \
+            clang llvm gcc make cmake libbpf-dev \
+            linux-tools-common linux-tools-generic \
             zstd xz-utils bzip2 gzip
+          # on Ubuntu bpftool is a virtual package (linux-tools-*); confirm
+          # the wrapper resolves before the build needs it
+          bpftool version
       - name: Host unit tests (ctest)
         run: make -C kernel-monitor test
       - name: Verifier pre-check
