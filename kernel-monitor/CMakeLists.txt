@@ -19,7 +19,7 @@ target_compile_options(vigil_core PRIVATE -Wall -Wextra)
 
 enable_testing()
 
-foreach(t pipeline syslog index event attach replay)
+foreach(t pipeline syslog index event attach replay hooks)
 	add_executable(${t}_test tests/${t}_test.c)
 	target_link_libraries(${t}_test PRIVATE vigil_core)
 	target_compile_definitions(${t}_test PRIVATE
