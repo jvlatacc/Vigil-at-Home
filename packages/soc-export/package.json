@@ -10,6 +10,9 @@
     "./mcp": "./src/mcp/index.ts",
     "./mcp/main": "./src/mcp/main.ts"
   },
+  "bin": {
+    "soc-export": "./bin/soc-export.js"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
@@ -18,5 +21,8 @@
     "@vigil/ai": "workspace:*",
     "@vigil/core": "workspace:*",
     "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }
