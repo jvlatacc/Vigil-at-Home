@@ -1,15 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
+import type { RelayConfig } from '../../shared/ipc.js';
+import { RelayCursor, RelayDeviceId } from '../../shared/ipc.js';
 import { Store } from '../db/store.js';
-import {
-  DEFAULT_RELAY_CONFIG,
-  KEY_RELAY,
-  RelayConfig,
-  RelayCursor,
-  RelayDeviceId,
-  loadRelayConfig,
-  readyToShip,
-} from './settings.js';
+import { DEFAULT_RELAY_CONFIG, KEY_RELAY, loadRelayConfig, readyToShip } from './settings.js';
 
 const GOOD = 'https://relay.example.com';
 const ID = 'macbook-of-john';
@@ -41,14 +35,18 @@ describe('relay settings', () => {
   it('ships only when enabled with a safe URL, a valid device id and a token', () => {
     expect(readyToShip({ enabled: false, endpointUrl: GOOD, deviceId: ID }, true)).toBe(false);
     expect(readyToShip({ enabled: true, endpointUrl: '', deviceId: ID }, true)).toBe(false);
-    expect(readyToShip({ enabled: true, endpointUrl: 'http://evil.example.com', deviceId: ID }, true)).toBe(false);
+    expect(
+      readyToShip({ enabled: true, endpointUrl: 'http://evil.example.com', deviceId: ID }, true),
+    ).toBe(false);
     expect(readyToShip({ enabled: true, endpointUrl: GOOD, deviceId: 'short' }, true)).toBe(false);
     expect(readyToShip({ enabled: true, endpointUrl: GOOD, deviceId: ID }, false)).toBe(false);
     expect(readyToShip({ enabled: true, endpointUrl: GOOD, deviceId: ID }, true)).toBe(true);
   });
 
   it('accepts a loopback http endpoint for a relay on this computer', () => {
-    expect(readyToShip({ enabled: true, endpointUrl: 'http://127.0.0.1:8080', deviceId: ID }, true)).toBe(true);
+    expect(
+      readyToShip({ enabled: true, endpointUrl: 'http://127.0.0.1:8080', deviceId: ID }, true),
+    ).toBe(true);
   });
 
   it('validates the device id like the ingest contract', () => {

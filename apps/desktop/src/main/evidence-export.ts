@@ -78,6 +78,9 @@ const DETAIL_KEYS: Record<
   xprotect_detected: ['malware', 'signatureVersion', 'incident'],
   tcc_modified: ['eventType', 'service', 'identity', 'identityType', 'authRight', 'authReason'],
   gatekeeper_override: [],
+  // Relay notices: the device is a Vigil-assigned id, not a secret.
+  relay_revoked: ['device'],
+  relay_gap: ['device', 'gapFromTs'],
 };
 
 /** A key that may name a credential: its value is withheld even when the key is known. */
