@@ -5,6 +5,7 @@
 import { execFile } from 'node:child_process';
 import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
 import { fileId } from '@vigil/core/self';
+import { OSQUERYD_CANDIDATES, resolveOsqueryd } from '@vigil/sensors';
 import { hostPlatform, type Platform } from './platform.js';
 import { openRegularFile, type OpenedFile, type OpenOptions } from './openedFile.js';
 
@@ -26,6 +27,7 @@ export const BINARIES = {
 /**
  * The Linux set. Paths are the merged-/usr locations every current Debian,
  * Ubuntu and Fedora release uses (/bin and /sbin link into /usr there).
+ * osqueryd is wherever the candidates resolve on this machine.
  */
 export const LINUX_BINARIES = {
   ps: '/usr/bin/ps',
@@ -37,7 +39,7 @@ export const LINUX_BINARIES = {
   fagenrules: '/usr/sbin/fagenrules',
   chattr: '/usr/bin/chattr',
   id: '/usr/bin/id',
-  osqueryd: '/opt/osquery/bin/osqueryd',
+  osqueryd: resolveOsqueryd() ?? OSQUERYD_CANDIDATES[0],
   /**
    * ss(8), which pairs a connected Unix socket with the pid that owns it
    * (peer.ts). Fedora and Debian before the sbin merge put it in /usr/sbin,

@@ -61,15 +61,19 @@ const LOCAL_AI: readonly SetupMode[] = ['local', 'both'];
 const CLOUD_AI: readonly SetupMode[] = ['cloud', 'both'];
 
 /** Which package manager a Linux computer uses, from /etc/os-release. */
-export type LinuxDistro = 'debian' | 'fedora' | 'other';
+export type LinuxDistro = 'debian' | 'fedora' | 'arch' | 'other';
 
-/** Debian, Ubuntu and their relatives use apt; Fedora, RHEL and theirs use dnf. */
+/**
+ * Debian, Ubuntu and their relatives use apt; Fedora, RHEL and theirs use
+ * dnf; Arch and its relatives (Manjaro, Omarchy) use pacman.
+ */
 export function linuxDistro(osRelease: string): LinuxDistro {
   const field = (name: string) =>
     osRelease.match(new RegExp(`^${name}=["']?([^"'\\n]*)`, 'm'))?.[1]?.toLowerCase() ?? '';
   const ids = `${field('ID')} ${field('ID_LIKE')}`.split(/\s+/);
   if (ids.some((id) => id === 'debian' || id === 'ubuntu')) return 'debian';
   if (ids.some((id) => ['fedora', 'rhel', 'centos'].includes(id))) return 'fedora';
+  if (ids.some((id) => id === 'arch' || id === 'archarm')) return 'arch';
   return 'other';
 }
 
@@ -309,7 +313,11 @@ export const FAPOLICYD_START =
 function linuxProtection(inputs: PlanInputs): StepDef[] {
   const distro = inputs.distro ?? 'other';
   const install = (pkg: string) =>
-    distro === 'debian' ? `sudo apt-get install -y ${pkg}` : `sudo dnf install -y ${pkg}`;
+    distro === 'debian'
+      ? `sudo apt-get install -y ${pkg}`
+      : distro === 'arch'
+        ? `sudo pacman -S --needed ${pkg}`
+        : `sudo dnf install -y ${pkg}`;
   const osquery: StepCommand[] =
     distro === 'debian'
       ? [
@@ -326,38 +334,53 @@ function linuxProtection(inputs: PlanInputs): StepDef[] {
             cmd: 'sudo apt-get update && sudo apt-get install -y osquery',
           },
         ]
-      : [
-          {
-            label: 'Trust osquery’s signing key',
-            cmd: 'curl -fsSL https://pkg.osquery.io/rpm/GPG | sudo tee /etc/pki/rpm-gpg/RPM-GPG-KEY-osquery >/dev/null',
-          },
-          {
-            label: 'Add osquery’s package repository',
-            cmd: 'curl -fsSL https://pkg.osquery.io/rpm/osquery-s3-rpm.repo | sudo tee /etc/yum.repos.d/osquery.repo >/dev/null',
-          },
-          {
-            label: 'Install osquery',
-            cmd: 'sudo dnf install -y --enablerepo=osquery-s3-rpm-repo osquery',
-          },
-        ];
+      : distro === 'arch'
+        ? [
+            {
+              // In the official repositories, so no key or repo setup.
+              label: 'Install osquery (Arch’s official extra repository)',
+              cmd: 'sudo pacman -S --needed osquery',
+            },
+          ]
+        : [
+            {
+              label: 'Trust osquery’s signing key',
+              cmd: 'curl -fsSL https://pkg.osquery.io/rpm/GPG | sudo tee /etc/pki/rpm-gpg/RPM-GPG-KEY-osquery >/dev/null',
+            },
+            {
+              label: 'Add osquery’s package repository',
+              cmd: 'curl -fsSL https://pkg.osquery.io/rpm/osquery-s3-rpm.repo | sudo tee /etc/yum.repos.d/osquery.repo >/dev/null',
+            },
+            {
+              label: 'Install osquery',
+              cmd: 'sudo dnf install -y --enablerepo=osquery-s3-rpm-repo osquery',
+            },
+          ];
   return [
     {
       id: 'fapolicyd',
       group: 'protection',
       title: 'fapolicyd',
-      why: 'Stops a program before it starts when Vigil has a block rule for it. It comes with your distribution. Vigil sets it to allow everything else, so it only blocks what you block in Vigil.',
+      why:
+        distro === 'arch'
+          ? 'Stops a program before it starts when Vigil has a block rule for it. Arch doesn’t package fapolicyd: it ships through the AUR only, and until it’s installed Vigil can watch but not block. Vigil sets it to allow everything else, so it only blocks what you block in Vigil.'
+          : 'Stops a program before it starts when Vigil has a block rule for it. It comes with your distribution. Vigil sets it to allow everything else, so it only blocks what you block in Vigil.',
       modes: ALL,
       commands: [
         {
           label: 'Let everything run that Vigil hasn’t blocked (do this before installing)',
           cmd: `sudo mkdir -p /etc/fapolicyd/rules.d && echo 'allow perm=any all : all' | sudo tee ${FAPOLICYD_ALLOW_RULES} >/dev/null`,
         },
-        ...(distro === 'other' ? [] : [{ label: 'Install fapolicyd', cmd: install('fapolicyd') }]),
+        ...(distro === 'other' || distro === 'arch'
+          ? []
+          : [{ label: 'Install fapolicyd', cmd: install('fapolicyd') }]),
         {
           label:
             distro === 'other'
               ? 'Install fapolicyd with your package manager, then load the rules and start it'
-              : 'Load the rules and start it, now and after a restart',
+              : distro === 'arch'
+                ? 'After installing fapolicyd from the AUR, load the rules and start it, now and after a restart'
+                : 'Load the rules and start it, now and after a restart',
           cmd: FAPOLICYD_START,
         },
       ],
@@ -372,7 +395,7 @@ function linuxProtection(inputs: PlanInputs): StepDef[] {
       modes: ALL,
       commands: distro === 'other' ? [] : osquery,
       check: 'osquery',
-      checks: 'osqueryd is installed in /opt/osquery/bin or /usr/bin',
+      checks: 'osqueryd is installed in /opt/osquery/bin, /usr/bin or /usr/local/bin',
       ...(distro === 'other'
         ? { unavailable: 'Install osquery from https://osquery.io/downloads, then check again.' }
         : {}),
@@ -397,6 +420,30 @@ function linuxProtection(inputs: PlanInputs): StepDef[] {
       unavailable:
         'This build of Vigil doesn’t include the helper. Install Vigil from its .deb or AppImage, or run pnpm build:helper in the repo and restart Vigil.',
     },
+    // Arch only: a full desktop ships these and never says so, and a window
+    // manager setup is missing some of them. Omarchy bundles all four.
+    ...(distro === 'arch'
+      ? [
+          {
+            id: 'desktop',
+            group: 'protection',
+            title: 'Desktop services',
+            why: 'Vigil needs a few desktop services that a full desktop runs on its own and a window-manager setup has to name: a polkit agent opens the password prompts (the helper install, and every block undo), a tray-capable bar shows Vigil’s menu icon, a notification daemon delivers its alerts, and XWayland shows the alert window on Wayland. Omarchy already includes all four.',
+            modes: ALL,
+            optional: true,
+            commands: [],
+            manual: [
+              { text: 'A polkit agent, such as hyprpolkitagent, answers the password prompts.' },
+              {
+                text: 'A tray-capable bar, such as waybar with its tray module, shows Vigil’s menu icon.',
+              },
+              { text: 'A notification daemon, such as mako, delivers the alerts.' },
+              { text: 'XWayland (the xorg-xwayland package) when you run Wayland.' },
+            ],
+            checks: 'the four services are running; Vigil has no check for them',
+          } satisfies StepDef,
+        ]
+      : []),
   ];
 }
 

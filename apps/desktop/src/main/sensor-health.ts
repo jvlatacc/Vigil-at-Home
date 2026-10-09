@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { execFileWithin } from '@vigil/ai';
+import { OSQUERYD_CANDIDATES } from '@vigil/sensors';
 import type { EventSource } from '@vigil/core';
 import type { HelperState } from './helper.js';
 import type { SensorRegistry } from './sensors.js';
@@ -25,8 +26,6 @@ export const OSQUERY_PATHS = [
   '/usr/local/bin/osqueryd',
   '/opt/homebrew/bin/osqueryd',
 ];
-/** Where osquery's Linux packages put osqueryd. */
-export const LINUX_OSQUERY_PATHS = ['/opt/osquery/bin/osqueryd', '/usr/bin/osqueryd'];
 /** fapolicyd, which blocks programs by hash on Linux, as Fedora and Debian install it. */
 export const FAPOLICYD_PATHS = ['/usr/sbin/fapolicyd', '/usr/bin/fapolicyd'];
 
@@ -125,8 +124,8 @@ export async function checkHealth(p: HealthProbe): Promise<SensorHealth[]> {
     id: 'santa' | 'osquery',
     name: string,
     detail: string,
-    paths: string[],
-    processes: string[],
+    paths: readonly string[],
+    processes: readonly string[],
   ): Promise<SensorHealth> => {
     const base = { id, name, detail };
     const reported = reportedSensors?.[id];
@@ -178,7 +177,7 @@ export async function checkHealth(p: HealthProbe): Promise<SensorHealth[]> {
       'osquery',
       'osquery',
       'Watches processes, files and network',
-      LINUX_OSQUERY_PATHS,
+      OSQUERYD_CANDIDATES,
       ['osqueryd'],
     );
   }

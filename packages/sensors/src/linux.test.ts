@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PackageIndex,
   dpkgSource,
+  pacmanSource,
   rpmSource,
   runnable,
   sandboxedPackage,
@@ -113,6 +114,44 @@ describe('package index', () => {
       sources: [dpkgSource('/nonexistent/info', '/nonexistent/status')],
     });
     expect(index.trust('/usr/bin/curl')).toEqual({ signing: 'unsigned' });
+  });
+
+  it("reads pacman's local database with its %FILES% and %BACKUP% sections", () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vigil-pacman-'));
+    try {
+      mkdirSync(join(dir, 'pacman-7.0.0-1'), { recursive: true });
+      writeFileSync(
+        join(dir, 'pacman-7.0.0-1', 'files'),
+        '%FILES%\netc/\netc/pacman.conf\nusr/\nusr/bin/\n' +
+          'usr/bin/pacman\nusr/share/man/\nusr/share/man/man8/pacman.8.gz\n\n' +
+          '%BACKUP%\netc/pacman.conf\td41d8cd98f00b204e9800998ecf8427e\n',
+      );
+      // A hyphenated name (everything before the version and release), and an
+      // epoch prefix, which holds a colon but no hyphen.
+      mkdirSync(join(dir, 'linux-api-headers-6.6.55-1'), { recursive: true });
+      writeFileSync(
+        join(dir, 'linux-api-headers-6.6.55-1', 'files'),
+        '%FILES%\nusr/include/\nusr/include/linux/a.h\n',
+      );
+      mkdirSync(join(dir, 'lib32-mesa-1:24.2.3-1'), { recursive: true });
+      writeFileSync(join(dir, 'lib32-mesa-1:24.2.3-1', 'files'), '%FILES%\nusr/lib32/glxinfo\n');
+      // A folder that is not a package entry (no name-version-release).
+      mkdirSync(join(dir, 'stray'), { recursive: true });
+      const index = new PackageIndex({ sources: [pacmanSource(dir)] });
+      expect(index.owner('/usr/bin/pacman')).toBe('pkg:pacman');
+      expect(index.owner('/usr/lib32/glxinfo')).toBe('pkg:lib32-mesa');
+      expect(index.owner('/usr/include/linux/a.h')).toBeUndefined();
+      expect(index.owner('/etc/pacman.conf')).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a missing pacman database gives an empty index, not an error', () => {
+    const src = pacmanSource('/nonexistent/pacman');
+    expect(src.version()).toBeUndefined();
+    const index = new PackageIndex({ sources: [src] });
+    expect(index.trust('/usr/bin/pacman')).toEqual({ signing: 'unsigned' });
   });
 });
 

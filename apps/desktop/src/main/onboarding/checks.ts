@@ -2,6 +2,7 @@ import { execFileWithin } from '@vigil/ai';
 import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir, totalmem } from 'node:os';
 import { classifierModelChoice } from '@vigil/ai';
+import { OSQUERYD_CANDIDATES, resolveOsqueryd } from '@vigil/sensors';
 import { join } from 'node:path';
 import type { CheckId } from '../../shared/setup.js';
 import { FAPOLICYD_ALLOW_RULES, LOCAL_MODEL, LOCAL_MODEL_SMALL } from './plan.js';
@@ -92,11 +93,15 @@ export const CHECKS: Record<CheckId, (p: Probe) => Promise<CheckResult>> = {
   },
 
   osquery: async (p) => {
+    // Linux candidates come from @vigil/sensors, shared with the helper, so
+    // both halves agree on what "installed" means.
     const bin =
       p.platform === 'linux'
-        ? ['/opt/osquery/bin/osqueryd', '/usr/bin/osqueryd']
-        : ['/usr/local/bin/osqueryi', '/opt/osquery/lib/osquery.app/Contents/MacOS/osqueryd'];
-    return bin.some((f) => p.exists(f)) ? { ok: true } : { ok: false };
+        ? resolveOsqueryd(OSQUERYD_CANDIDATES, (f) => p.exists(f))
+        : ['/usr/local/bin/osqueryi', '/opt/osquery/lib/osquery.app/Contents/MacOS/osqueryd'].find(
+            (f) => p.exists(f),
+          );
+    return bin ? { ok: true } : { ok: false };
   },
 
   fapolicyd: async (p) => {

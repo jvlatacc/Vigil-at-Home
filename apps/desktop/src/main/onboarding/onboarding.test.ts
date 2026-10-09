@@ -9,6 +9,7 @@ import { calls } from '../../shared/ipc.js';
 import { feedKeyNote, keyedFeeds } from '../../shared/setup.js';
 import {
   FAPOLICYD_ALLOW_RULES,
+  FAPOLICYD_START,
   LOCAL_MODEL,
   LOCAL_MODEL_SMALL,
   linuxDistro,
@@ -587,21 +588,25 @@ describe('Codex sign-in', () => {
 });
 
 describe('setup on Linux', () => {
-  const linux = (distro: 'debian' | 'fedora' | 'other') =>
+  const linux = (distro: 'debian' | 'fedora' | 'arch' | 'other') =>
     setupPlan({ platform: 'linux', distro, helperInstallCommand: 'sudo sh x' });
 
-  it('tells apt and dnf distributions apart from /etc/os-release', () => {
+  it('tells apt, dnf and pacman distributions apart from /etc/os-release', () => {
     expect(linuxDistro('NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\n')).toBe('debian');
     expect(linuxDistro('ID=linuxmint\nID_LIKE="ubuntu debian"\n')).toBe('debian');
     expect(linuxDistro('ID=debian\n')).toBe('debian');
     expect(linuxDistro('ID=fedora\n')).toBe('fedora');
     expect(linuxDistro('ID="rocky"\nID_LIKE="rhel centos fedora"\n')).toBe('fedora');
-    expect(linuxDistro('ID=arch\n')).toBe('other');
+    expect(linuxDistro('ID=arch\n')).toBe('arch');
+    expect(linuxDistro('ID=archarm\n')).toBe('arch');
+    // Arch's relatives: Manjaro and EndeavourOS declare it in ID_LIKE.
+    expect(linuxDistro('ID="manjaro"\nID_LIKE="arch"\n')).toBe('arch');
+    expect(linuxDistro('ID=endeavouros\nID_LIKE="arch"\n')).toBe('arch');
     expect(linuxDistro('')).toBe('other');
   });
 
   it('protects with fapolicyd, osquery and the helper, with no Homebrew or Santa', () => {
-    for (const distro of ['debian', 'fedora', 'other'] as const) {
+    for (const distro of ['debian', 'fedora', 'arch', 'other'] as const) {
       const plan = linux(distro);
       const ids = plan.map((s) => s.id);
       expect(ids.slice(0, 3)).toEqual(['fapolicyd', 'osquery', 'helper']);
@@ -649,6 +654,32 @@ describe('setup on Linux', () => {
     const other = linux('other').find((s) => s.id === 'osquery')!;
     expect(other.commands).toEqual([]);
     expect(other.unavailable).toMatch(/osquery\.io/);
+  });
+
+  it('gives Arch its real sources: osquery from extra, fapolicyd from the AUR only', () => {
+    const plan = linux('arch');
+    const os = plan.find((s) => s.id === 'osquery')!;
+    // No key or repository setup: osquery is in the official extra repository.
+    expect(os.commands.map((c) => c.cmd)).toEqual(['sudo pacman -S --needed osquery']);
+    expect(os.unavailable).toBeUndefined();
+
+    const fap = plan.find((s) => s.id === 'fapolicyd')!;
+    // No install command — fapolicyd is not in the official repositories.
+    expect(fap.commands.map((c) => c.label)).not.toContain('Install fapolicyd');
+    expect(fap.commands).toHaveLength(2);
+    expect(fap.why).toMatch(/AUR/);
+    expect(fap.why).toMatch(/not block/);
+    expect(fap.commands.at(-1)!.label).toMatch(/AUR/);
+    expect(fap.commands.at(-1)!.cmd).toBe(FAPOLICYD_START);
+
+    const desktop = plan.find((s) => s.id === 'desktop')!;
+    expect(desktop.optional).toBe(true);
+    expect(desktop.why).toMatch(/Omarchy/);
+    const manual = desktop.manual!.map((m) => m.text).join('\n');
+    for (const named of ['hyprpolkitagent', 'waybar', 'mako', 'xorg-xwayland']) {
+      expect(manual, named).toContain(named);
+    }
+    expect(desktop.commands).toEqual([]);
   });
 
   it('installs the AI tools without Homebrew', () => {

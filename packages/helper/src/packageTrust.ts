@@ -4,7 +4,13 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { PackageIndex, dpkgSource, rpmSource, type PackageSource } from '@vigil/sensors';
+import {
+  PackageIndex,
+  dpkgSource,
+  pacmanSource,
+  rpmSource,
+  type PackageSource,
+} from '@vigil/sensors';
 import { LINUX_BINARIES } from './system.js';
 
 /** rpm's whole file list, one "path<TAB>package" per line. Run only when the database changed. */
@@ -26,6 +32,10 @@ export function linuxPackageIndex(): PackageIndex {
   // Some Debian systems have rpm installed as a tool with an empty database;
   // that source then simply yields nothing.
   if (existsSync(LINUX_BINARIES.rpm)) sources.push(rpmSource(() => rpmList(LINUX_BINARIES.rpm)));
+  // pacman reads the local database files, so there is no binary to check;
+  // on systems without a database the source's version() is undefined and
+  // the index skips it.
+  sources.push(pacmanSource());
   const index = new PackageIndex({ sources });
   index.refresh();
   return index;
