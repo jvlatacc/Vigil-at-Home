@@ -1,6 +1,6 @@
 import { gzip } from 'node:zlib';
 import { promisify } from 'node:util';
-import type { IngestRequest } from './wire.js';
+import type { IngestRequest } from '@vigil/core';
 
 const gzipAsync = promisify(gzip);
 

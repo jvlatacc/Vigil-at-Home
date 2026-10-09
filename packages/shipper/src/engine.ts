@@ -8,14 +8,21 @@ import type {
   StoredEvent,
 } from './store.js';
 import type { ShipperTransport } from './transport.js';
-import type { ShipCursor, ShipRecord } from './wire.js';
-import { AlertBody, DeviceId, EventBody, IngestAck, IngestRequest, laterCursor } from './wire.js';
+import {
+  AlertBody,
+  EventBody,
+  IngestAck,
+  IngestRequest,
+  MAX_BATCH_RECORDS,
+  type Cursor,
+  type ShipRecord,
+} from '@vigil/core';
 
 /** How often a healthy engine looks for new records: the house batch discipline. */
 export const BATCH_EVERY_MS = 1_000;
 
 /** The most records one batch may carry — the relay's ingest cap. */
-export const BATCH_MAX = 500;
+export const BATCH_MAX = MAX_BATCH_RECORDS;
 
 /** Gap notes kept in `status()`, oldest first. */
 export const MAX_GAP_NOTES = 10;
@@ -25,9 +32,9 @@ export type ShipperState = 'running' | 'backoff' | 'gap' | 'error';
 /** Unsent records the store pruned before they could ship: the position jumped forward. */
 export interface GapNote {
   /** The cursor position after the last shipped record before the gap. */
-  from: ShipCursor;
+  from: Cursor;
   /** The oldest record the store still held when the gap was found. */
-  to: ShipCursor;
+  to: Cursor;
   /** When the gap was detected, in ms from the epoch. */
   at: number;
 }
@@ -47,7 +54,7 @@ export interface ShipperStatus {
   state: ShipperState;
   /** Records read from the store and not yet acked by the relay. */
   lagRecords: number;
-  lastAck?: ShipCursor;
+  lastAck?: Cursor;
   lastAckAt?: number;
   /** Pruning gaps found so far, oldest first, at most `MAX_GAP_NOTES`. */
   gaps: GapNote[];
@@ -70,12 +77,12 @@ export interface RelayShipperOptions {
    */
   redact: (body: unknown) => unknown;
   /** Where to start reading; the wiring loads it from the settings store. Defaults to the stream's beginning. */
-  cursor?: ShipCursor;
+  cursor?: Cursor;
   batchEveryMs?: number;
   batchMax?: number;
   backoff?: BackoffOptions;
   /** Called on every relay ack so the wiring can persist the cursor; the engine holds no storage. */
-  onAck?: (cursor: ShipCursor) => void;
+  onAck?: (cursor: Cursor) => void;
   /** Called when pruning beat the shipper; wire this to the house alert channel. */
   onGap?: (note: GapNote) => void;
   /** Called when the engine stops itself; wire this to the house alert channel too. */
@@ -97,6 +104,24 @@ class HaltError extends Error {
 
 const RETRYABLE_STATUS = (status: number): boolean =>
   status === 408 || status === 425 || status === 429 || status >= 500;
+
+/**
+ * The id that sorts below every real record id — record ids are long
+ * hashes — used where a position means "before any id at this ts". The
+ * wire's Cursor requires a non-empty id (the contract's `Id` bound), so a
+ * position at the stream's origin carries this placeholder, not `''`.
+ */
+const BEFORE_IDS = '0';
+
+/**
+ * The later of two cursor positions by (ts, id). The engine never lets its
+ * cursor move backward, whatever the relay's ack says.
+ */
+export function laterCursor(a: Cursor, b: Cursor): Cursor {
+  if (a.ts !== b.ts) return a.ts > b.ts ? a : b;
+  if (a.id !== b.id) return a.id > b.id ? a : b;
+  return a;
+}
 
 /**
  * Ships the app's stored telemetry to the relay: reads the store through the
@@ -122,7 +147,7 @@ export class RelayShipper {
   private readonly backoff: Required<BackoffOptions>;
   private readonly now: () => number;
 
-  private cursor: ShipCursor;
+  private cursor: Cursor;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private cycling = false;
   private stopped = true;
@@ -130,14 +155,14 @@ export class RelayShipper {
   private failures = 0;
   private lagRecords = 0;
   private retryInMs = DEFAULT_BACKOFF.baseMs;
-  private lastAck: ShipCursor | undefined;
+  private lastAck: Cursor | undefined;
   private lastAckAt: number | undefined;
   private lastError: string | undefined;
   private halted: HaltReason | undefined;
   private gaps: GapNote[] = [];
   /**
    * Whether the cursor marks a real acked position. A brand-new shipper
-   * ({ts: 0, id: ''}, nothing acked yet) has nothing to lose, so pruning
+   * ({ts: 0, id: '0'}, nothing acked yet) has nothing to lose, so pruning
    * cannot make a gap until the first ack — or a restart from a saved cursor.
    */
   private positioned: boolean;
@@ -147,7 +172,9 @@ export class RelayShipper {
   private pendingBatch: IngestRequest | undefined;
 
   constructor(opts: RelayShipperOptions) {
-    this.deviceId = DeviceId.parse(opts.deviceId);
+    // Validated through the wire schema itself — one source of truth for the
+    // device-id shape the relay enforces.
+    this.deviceId = IngestRequest.shape.deviceId.parse(opts.deviceId);
     this.store = opts.store;
     this.transport = opts.transport;
     this.redact = opts.redact;
@@ -169,7 +196,7 @@ export class RelayShipper {
     this.batchEveryMs = opts.batchEveryMs ?? BATCH_EVERY_MS;
     this.backoff = { ...DEFAULT_BACKOFF, ...opts.backoff };
     this.now = opts.now ?? Date.now;
-    this.cursor = opts.cursor ? { ...opts.cursor } : { ts: 0, id: '' };
+    this.cursor = opts.cursor ? { ...opts.cursor } : { ts: 0, id: BEFORE_IDS };
     this.positioned = opts.cursor !== undefined;
   }
 
@@ -262,9 +289,9 @@ export class RelayShipper {
     if (!this.positioned) return;
     const oldest = await this.store.oldestEvent();
     if (!oldest || oldest.ts <= this.cursor.ts) return;
-    const from: ShipCursor = { ...this.cursor };
-    // `id: ''` sorts before every id, so the next read includes the survivor itself.
-    this.cursor = { ts: oldest.ts, id: '' };
+    const from: Cursor = { ...this.cursor };
+    // BEFORE_IDS sorts below every real id, so the next read includes the survivor itself.
+    this.cursor = { ts: oldest.ts, id: BEFORE_IDS };
     const note: GapNote = { from, to: { ...oldest }, at: this.now() };
     const last = this.gaps[this.gaps.length - 1];
     if (last && last.from.ts === from.ts && last.to.ts === oldest.ts && last.to.id === oldest.id) {

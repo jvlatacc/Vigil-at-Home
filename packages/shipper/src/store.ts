@@ -1,5 +1,4 @@
-import type { Alert, SensorEvent } from '@vigil/core';
-import type { ShipCursor } from './wire.js';
+import type { Alert, Cursor, SensorEvent } from '@vigil/core';
 
 /**
  * The thin read-only view of the app's own store the engine ships from. The
@@ -12,11 +11,11 @@ import type { ShipCursor } from './wire.js';
  */
 export interface ShipperStore {
   /** Stored events after the cursor; bodies are rehydrated `SensorEvent`s. */
-  eventsSince(cursor: ShipCursor, limit: number): Promise<StoredEvent[]>;
+  eventsSince(cursor: Cursor, limit: number): Promise<StoredEvent[]>;
   /** Raised alerts after the cursor, AI assessment and user decisions included. */
-  alertsSince(cursor: ShipCursor, limit: number): Promise<StoredAlert[]>;
+  alertsSince(cursor: Cursor, limit: number): Promise<StoredAlert[]>;
   /** Response actions the helper executed, after the cursor. */
-  actionsSince(cursor: ShipCursor, limit: number): Promise<StoredAction[]>;
+  actionsSince(cursor: Cursor, limit: number): Promise<StoredAction[]>;
   /**
    * The device's current rules snapshot, or undefined when its version is not
    * newer than `shippedVersion` (which is undefined before the first send).
@@ -27,7 +26,7 @@ export interface ShipperStore {
    * holds none. Gap detection compares it with the cursor: if pruning has
    * moved it past the cursor, unsent records were dropped.
    */
-  oldestEvent(): Promise<ShipCursor | undefined>;
+  oldestEvent(): Promise<Cursor | undefined>;
 }
 
 /** An event read from the store. `body` may still carry `raw`; the engine strips it. */

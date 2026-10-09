@@ -1,7 +1,7 @@
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { HttpShipperTransport, PUSH_TIMEOUT_MS } from './transport.js';
-import type { IngestRequest } from './wire.js';
+import type { IngestRequest } from '@vigil/core';
 
 const request: IngestRequest = {
   v: 1,

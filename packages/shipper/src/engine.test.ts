@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RelayShipper, type GapNote, type HaltReason, type ShipperStatus } from './engine.js';
+import {
+  laterCursor,
+  RelayShipper,
+  type GapNote,
+  type HaltReason,
+  type ShipperStatus,
+} from './engine.js';
 import type {
   RuleSnapshot,
   ShipperStore,
@@ -8,8 +14,7 @@ import type {
   StoredEvent,
 } from './store.js';
 import type { ShipperTransport } from './transport.js';
-import type { IngestAck, IngestRequest, ShipCursor, ShipRecord } from './wire.js';
-import type { Alert, SensorEvent } from '@vigil/core';
+import type { Alert, Cursor, IngestAck, IngestRequest, SensorEvent, ShipRecord } from '@vigil/core';
 
 // ---------------------------------------------------------------------------
 // Fakes: the store, the transport, the redactor. The clock is vitest's.
@@ -21,17 +26,17 @@ class FakeStore implements ShipperStore {
   actions: StoredAction[] = [];
   snapshot: RuleSnapshot | undefined;
 
-  async eventsSince(cursor: ShipCursor, limit: number): Promise<StoredEvent[]> {
+  async eventsSince(cursor: Cursor, limit: number): Promise<StoredEvent[]> {
     return this.events
       .filter((e) => e.ts > cursor.ts || (e.ts === cursor.ts && e.id > cursor.id))
       .slice(0, limit);
   }
-  async alertsSince(cursor: ShipCursor, limit: number): Promise<StoredAlert[]> {
+  async alertsSince(cursor: Cursor, limit: number): Promise<StoredAlert[]> {
     return this.alerts
       .filter((a) => a.ts > cursor.ts || (a.ts === cursor.ts && a.id > cursor.id))
       .slice(0, limit);
   }
-  async actionsSince(cursor: ShipCursor, limit: number): Promise<StoredAction[]> {
+  async actionsSince(cursor: Cursor, limit: number): Promise<StoredAction[]> {
     return this.actions
       .filter((a) => a.ts > cursor.ts || (a.ts === cursor.ts && a.id > cursor.id))
       .slice(0, limit);
@@ -39,7 +44,7 @@ class FakeStore implements ShipperStore {
   async rulesIfChanged(shipped: number | undefined): Promise<RuleSnapshot | undefined> {
     return this.snapshot && this.snapshot.version !== shipped ? this.snapshot : undefined;
   }
-  async oldestEvent(): Promise<ShipCursor | undefined> {
+  async oldestEvent(): Promise<Cursor | undefined> {
     const first = this.events[0];
     return first ? { ts: first.ts, id: first.id } : undefined;
   }
@@ -131,7 +136,7 @@ const ackFor = (
     v: 1,
     accepted,
     duplicates,
-    ackedCursor: positional ? { ts: positional.ts, id: positional.id } : { ts: 0, id: '' },
+    ackedCursor: positional ? { ts: positional.ts, id: positional.id } : { ts: 0, id: '0' },
   };
   return JSON.stringify(ack);
 };
@@ -139,7 +144,7 @@ const ackFor = (
 interface Harness {
   store: FakeStore;
   transport: FakeTransport;
-  acks: ShipCursor[];
+  acks: Cursor[];
   gaps: GapNote[];
   halts: HaltReason[];
   shipper: RelayShipper;
@@ -151,7 +156,7 @@ const DEVICE = 'laptop-a1b2c3';
 function makeShipper(opts: Partial<ConstructorParameters<typeof RelayShipper>[0]> = {}): Harness {
   const store = new FakeStore();
   const transport = new FakeTransport();
-  const acks: ShipCursor[] = [];
+  const acks: Cursor[] = [];
   const gaps: GapNote[] = [];
   const halts: HaltReason[] = [];
   const shipper = new RelayShipper({
@@ -429,7 +434,7 @@ describe('gap detection', () => {
     ]);
     expect(h.status().gaps).toHaveLength(1);
     const batch = h.transport.calls[0]!;
-    expect(batch.cursor).toEqual({ ts: 500, id: '' }); // jumped forward
+    expect(batch.cursor).toEqual({ ts: 500, id: '0' }); // jumped forward
     expect(batch.records.map((r) => r.id)).toEqual(['e0001', 'e0002']);
     expect(h.acks[0]).toEqual({ ts: 600, id: 'e0002' });
     expect(h.status().lastAck).toEqual({ ts: 600, id: 'e0002' });
@@ -462,8 +467,17 @@ describe('gap detection', () => {
     h.shipper.start();
     await tick();
     expect(h.gaps).toEqual([]);
-    expect(h.transport.calls[0]!.cursor).toEqual({ ts: 0, id: '' }); // starts at the beginning
+    expect(h.transport.calls[0]!.cursor).toEqual({ ts: 0, id: '0' }); // starts at the beginning
     expect(h.transport.calls[0]!.records.map((r) => r.id)).toEqual(['e0001', 'e0002']);
+  });
+});
+
+describe('laterCursor', () => {
+  it('compares by ts, then id', () => {
+    const a = { ts: 5, id: 'a' };
+    expect(laterCursor(a, { ts: 4, id: 'z' })).toEqual(a);
+    expect(laterCursor(a, { ts: 5, id: 'b' })).toEqual({ ts: 5, id: 'b' });
+    expect(laterCursor(a, a)).toEqual(a);
   });
 });
 
