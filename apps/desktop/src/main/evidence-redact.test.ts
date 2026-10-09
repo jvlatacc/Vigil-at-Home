@@ -68,7 +68,9 @@ describe('command lines in copied evidence', () => {
 
   it("hides this computer's names as whole tokens, and nothing else", () => {
     expect(command('cat <al; ssh pc>out', names)).toBe('cat <<user>; ssh <host>>out');
-    expect(command('ssh al@pc.local', names)).toBe('ssh <user>@<host>');
+    // al@pc.local is an email span to the shared rule, which takes it whole
+    // (the email covers both name tokens, so more is hidden, not less).
+    expect(command('ssh al@pc.local', names)).toBe('ssh <email>');
     expect(argv(['/Users/al/x', '/tmp/al_backup/f', 'my-pc', 'AL'], names)).toEqual([
       '/Users/<user>/x',
       '/tmp/<user>_backup/f',
@@ -355,7 +357,7 @@ describe("the shared redaction's secret scan in copied evidence", () => {
     ])
       expect(command(text, names), text).toBe(text);
     expect(command('ls -la /Users/alex/Documents', names)).toBe('ls -la /Users/<user>/Documents');
-    expect(command('ssh al@pc.local uptime', names)).toBe('ssh <user>@<host> uptime');
+    expect(command('ssh al@pc.local uptime', names)).toBe('ssh <email> uptime');
     expect(argv(['ls', '-la', '/Users/al/Documents'], names)).toEqual([
       'ls',
       '-la',
@@ -431,6 +433,57 @@ describe("the shared redaction's secret scan in copied evidence", () => {
       };
       expect(out.alert.decision.note, note).toBe(WITHHELD);
     }
+  });
+});
+
+describe('emails in copied evidence', () => {
+  it('redacts an email on the copy path (EVID-01: git config user.email)', () => {
+    expect(command('git config user.email john.doe@corp.example')).toBe(
+      'git config user.email <email>',
+    );
+    expect(argv(['git', 'config', 'user.email', 'john.doe@corp.example'])).toEqual([
+      'git',
+      'config',
+      'user.email',
+      '<email>',
+    ]);
+    expect(command('curl https://example.com/subscribe?email=alice@corp.example')).toBe(
+      'curl https://example.com/subscribe?email=<email>',
+    );
+  });
+
+  it('hides an email whole even when it holds this computer\u2019s user or host name', () => {
+    expect(command('git config user.email john.doe@corp.example', { username: 'john' })).toBe(
+      'git config user.email <email>',
+    );
+    expect(command('mail me@pc.local', names)).toBe('mail <email>');
+  });
+
+  it('redacts emails in other passing text: a note, a label, a title', () => {
+    expect(
+      redactEvidence({ alert: { decision: { note: 'Ask alice@corp.example to fix' } } }, names),
+    ).toEqual({ alert: { decision: { note: 'Ask <email> to fix' } } });
+    expect(redactEvidence({ subject: { label: 'alice@corp.example' } }, names)).toEqual({
+      subject: { label: '<email>' },
+    });
+    expect(redactEvidence({ title: 'Mail from alice@corp.example' }, names)).toEqual({
+      title: 'Mail from <email>',
+    });
+  });
+
+  it('leaves secret-shape withholding and withheld originals alone', () => {
+    // A credential-named value that is an email is still withheld, not cut into.
+    expect(command('PGPASSWORD=me@corp.example psql')).toBe(WITHHELD);
+    // The originals kept for repeat matching stay as written: a title
+    // repeating a withheld command keeps hiding, raw email included.
+    const out = redactEvidence(
+      {
+        alert: { title: 'Ran PGPASSWORD=me@corp.example psql' },
+        events: [{ command: 'PGPASSWORD=me@corp.example psql' }],
+      },
+      {},
+    ) as { alert: { title: string } };
+    expect(out.alert.title).toBe(WITHHELD);
   });
 });
 
