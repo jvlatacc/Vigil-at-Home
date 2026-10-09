@@ -156,11 +156,13 @@ jobs:
           # Pulled from quay since 2026-10-09: Docker Hub's anonymous-pull
           # throttling of GitHub-runner egress IPs timed out the auth-token
           # fetch twice in a row; quay is Rocky's own registry mirror.
+          # --privileged does not unconfine AppArmor: the Ubuntu runner's
+          # policy denies unix_chkpwd (and even root's chmod) the
+          # cap_dac_override inside the container, which is what broke
+          # sudo's PAM account check (rocky sig#56). Unconfine explicitly.
+          # (The comment sits above the command: inside a backslash-
+          # continuation chain, a '#' swallows the rest of the command.)
           docker run -d --name vigil-rhel --privileged --cgroupns=host \
-            # --privileged does not unconfine AppArmor: the Ubuntu runner's
-            # policy denies unix_chkpwd (and even root's chmod) the
-            # cap_dac_override inside the container, which is what broke
-            # sudo's PAM account check (rocky sig#56). Unconfine explicitly.
             --security-opt apparmor=unconfined \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
@@ -190,6 +192,11 @@ jobs:
           fi
       - name: Node.js and pnpm in the container
         run: |
+          # This whole docker exec script is one single-quoted string: no
+          # apostrophes inside it, not even in comments. An apostrophe
+          # terminates the string early and the trailing commands leak out
+          # of the container — that is exactly how the first chmod attempt
+          # ran on the runner itself and died with EPERM.
           docker exec vigil-rhel /bin/bash -euc '
             # curl-minimal (in the base image) conflicts with full curl and
             # already provides the curl binary, so it is not listed here.
@@ -199,16 +206,15 @@ jobs:
             # The major tracks packageManager in package.json (pnpm 10 today).
             npm install -g pnpm@10
             git config --global --add safe.directory /workspace
-            # The image ships /etc/shadow as mode 000, and on the Ubuntu runner
+            # The image ships /etc/shadow as mode 000, and the Ubuntu runner
             # AppArmor denies unix_chkpwd the cap_dac_override that reading a
-            # 000 file needs — sudo's PAM account check then fails with
+            # 000 file needs — the PAM account check then fails with
             # "Authentication service cannot retrieve authentication info"
             # (rocky-linux/sig-cloud-instance-images#56). Owner-read fixes it
             # for this disposable test container. Never fatal: if the chmod
-            # itself is denied (it returned EPERM once in the booted
-            # container), record the mode and let the apparmor=unconfined
-            # flag above carry the fix instead.
-            chmod 0400 /etc/shadow || stat -c 'chmod failed; shadow mode: %a' /etc/shadow
+            # itself is denied, record the mode and let the
+            # apparmor=unconfined flag on the container carry the fix.
+            chmod 0400 /etc/shadow || stat -c "chmod failed; shadow mode: %a" /etc/shadow
           '
       - name: Install dependencies
         run: docker exec -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -w /workspace vigil-rhel pnpm install --frozen-lockfile
