@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
 import { compareVersions, isLinuxPackage, newest, UpdateChecker } from './updates.js';
 
 const release = (tag: string, o: { draft?: boolean; prerelease?: boolean } = {}) => ({
@@ -166,5 +168,199 @@ describe('newest on Linux', () => {
     expect(a?.version).toBe('0.1.0-alpha.3');
     expect(a?.downloadUrl).toBeUndefined();
     expect(a?.notesUrl).toMatch(/^https:\/\/github\.com\//);
+  });
+});
+
+describe('UpdateChecker verifies release signatures (REL-01)', () => {
+  const tag = '0.1.0-alpha.3';
+  const base = `https://github.com/ShmalexM/Vigil-at-Home/releases/download/v${tag}`;
+  const sumsBody = `9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08  Vigil-at-Home-${tag}-arm64.dmg\n`;
+
+  const ed25519Pair = () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    return {
+      privatePem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      publicPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+    };
+  };
+
+  const minisigFor = (data: string, privatePem: string) => {
+    const sig = sign(null, Buffer.from(data, 'utf8'), createPrivateKey(privatePem));
+    return `untrusted comment: Vigil at Home release signature\n${sig.toString('base64')}\n`;
+  };
+
+  /**
+   * A checker whose fetch serves the releases list plus checksum assets from
+   * a map. `withMinisig: false` makes an unsigned release (sums or not).
+   */
+  async function checkWith(
+    files: Record<string, { ok?: boolean; status?: number; body: string }>,
+    options: { signingPublicKey?: string; withMinisig?: boolean; minisigUrl?: string } = {},
+  ) {
+    const r = release(tag);
+    r.assets.push(
+      { name: 'SHA256SUMS.txt', browser_download_url: `${base}/SHA256SUMS.txt` },
+      ...(options.withMinisig === false
+        ? []
+        : [
+            {
+              name: 'SHA256SUMS.txt.minisig',
+              browser_download_url: options.minisigUrl ?? `${base}/SHA256SUMS.txt.minisig`,
+            },
+          ]),
+    );
+    let saved: unknown = {};
+    const opened: string[] = [];
+    const found: string[] = [];
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...parts: unknown[]) => {
+      warnings.push(parts.map(String).join(' '));
+    });
+    try {
+      const c = new UpdateChecker({
+        current: '0.1.0-alpha.2',
+        arch: 'arm64',
+        load: () => saved,
+        save: (s) => void (saved = s),
+        fetch: (async (url: string | URL) => {
+          const u = String(url);
+          if (u.includes('api.github.com')) {
+            return { ok: true, status: 200, json: async () => [r] } as never;
+          }
+          const f = files[u];
+          if (!f) return { ok: false, status: 404, text: async () => '' } as never;
+          return { ok: f.ok ?? true, status: f.status ?? 200, text: async () => f.body } as never;
+        }) as never,
+        openExternal: async (u) => void opened.push(u),
+        onFound: (v) => found.push(v),
+        now: () => 1000,
+        ...(options.signingPublicKey !== undefined
+          ? { signingPublicKey: options.signingPublicKey }
+          : {}),
+      });
+      const view = await c.check();
+      return { c, view, opened, found, warnings };
+    } finally {
+      warn.mockRestore();
+    }
+  }
+
+  it('offers a signed release whose checksums verify', async () => {
+    const kp = ed25519Pair();
+    const { view, found, warnings } = await checkWith(
+      {
+        [`${base}/SHA256SUMS.txt`]: { body: sumsBody },
+        [`${base}/SHA256SUMS.txt.minisig`]: { body: minisigFor(sumsBody, kp.privatePem) },
+      },
+      { signingPublicKey: kp.publicPem },
+    );
+    expect(view.available?.version).toBe(tag);
+    expect(view.error).toBeUndefined();
+    expect(found).toEqual([tag]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('pairs the committed release key with the dogfood key without options', async () => {
+    // Signs with scripts/release/dogfood-signing-key.b64; the checker falls
+    // back to the committed RELEASE_SIGNING_PUBLIC_KEY.
+    const b64 = readFileSync(
+      new URL('../../../../scripts/release/dogfood-signing-key.b64', import.meta.url),
+      'utf8',
+    ).trim();
+    const pem = `-----BEGIN PRIVATE KEY-----\n${b64}\n-----END PRIVATE KEY-----\n`;
+    const { view, warnings } = await checkWith({
+      [`${base}/SHA256SUMS.txt`]: { body: sumsBody },
+      [`${base}/SHA256SUMS.txt.minisig`]: { body: minisigFor(sumsBody, pem) },
+    });
+    expect(view.available?.version).toBe(tag);
+    expect(warnings).toEqual([]);
+  });
+
+  it('does not offer a release whose signature fails (tampered sums)', async () => {
+    const kp = ed25519Pair();
+    // Signed over different bytes than the sums that ship.
+    const tampered = minisigFor(`${sumsBody}deadbeef  extra.bin\n`, kp.privatePem);
+    const { c, view, found, opened } = await checkWith(
+      {
+        [`${base}/SHA256SUMS.txt`]: { body: sumsBody },
+        [`${base}/SHA256SUMS.txt.minisig`]: { body: tampered },
+      },
+      { signingPublicKey: kp.publicPem },
+    );
+    expect(view.available).toBeUndefined();
+    expect(view.error).toMatch(/does not verify/);
+    expect(found).toEqual([]);
+    await c.download();
+    expect(opened).toEqual([]);
+  });
+
+  it('fails closed when the checksums cannot be downloaded for verification', async () => {
+    const kp = ed25519Pair();
+    const { view } = await checkWith(
+      {
+        [`${base}/SHA256SUMS.txt`]: { ok: false, status: 404, body: '' },
+        [`${base}/SHA256SUMS.txt.minisig`]: { body: minisigFor(sumsBody, kp.privatePem) },
+      },
+      { signingPublicKey: kp.publicPem },
+    );
+    expect(view.available).toBeUndefined();
+    expect(view.error).toMatch(/answered 404/);
+  });
+
+  it('refuses signature assets that do not come from the allowlisted URL', async () => {
+    // No files at all: an evil URL must never even be fetched.
+    const { view, warnings } = await checkWith(
+      {},
+      {
+        signingPublicKey: ed25519Pair().publicPem,
+        minisigUrl: 'https://evil.test/SHA256SUMS.txt.minisig',
+      },
+    );
+    expect(view.available).toBeUndefined();
+    expect(view.error).toMatch(/allowlisted/);
+    expect(warnings.join('\n')).toMatch(/allowlisted/);
+  });
+
+  it('refuses a release that has a signature but no checksums to verify', async () => {
+    const kp = ed25519Pair();
+    // Build the release by hand: minisig present, sums missing.
+    let captured: { view: ReturnType<UpdateChecker['view']> } | undefined;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const r = release(tag);
+      r.assets.push({
+        name: 'SHA256SUMS.txt.minisig',
+        browser_download_url: `${base}/SHA256SUMS.txt.minisig`,
+      });
+      const c = new UpdateChecker({
+        current: '0.1.0-alpha.2',
+        arch: 'arm64',
+        load: () => ({}),
+        save: () => {},
+        fetch: (async () => ({
+          ok: true,
+          status: 200,
+          json: async () => [r],
+          text: async () => '',
+        })) as never,
+        openExternal: async () => {},
+        signingPublicKey: kp.publicPem,
+      });
+      captured = { view: await c.check() };
+    } finally {
+      warn.mockRestore();
+    }
+    expect(captured!.view.available).toBeUndefined();
+    expect(captured!.view.error).toMatch(/no SHA256SUMS\.txt/);
+  });
+
+  it('still offers an unsigned release, with a logged warning (fail-open)', async () => {
+    const { view, found, warnings } = await checkWith(
+      { [`${base}/SHA256SUMS.txt`]: { body: sumsBody } },
+      { withMinisig: false },
+    );
+    expect(view.available?.version).toBe(tag);
+    expect(found).toEqual([tag]);
+    expect(warnings.join('\n')).toMatch(/no SHA256SUMS\.txt\.minisig/);
   });
 });

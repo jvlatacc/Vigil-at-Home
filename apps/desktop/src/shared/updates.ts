@@ -1,7 +1,9 @@
 /**
- * Update notices, shared by main and the renderer. Vigil ships unsigned for now,
- * so it can't replace itself: it tells the user a newer release is out and
- * offers the DMG for their Mac.
+ * Update notices, shared by main and the renderer. Vigil can't replace
+ * itself: it tells the user a newer release is out and offers the DMG for
+ * their Mac. Before anything is offered, the release's checksum signature
+ * is verified (audit REL-01); unsigned releases are offered with a logged
+ * warning until the release signing key is provisioned.
  */
 export interface UpdateView {
   /** The version running now. */
