@@ -91,13 +91,13 @@ Maintainers: run the **Release** workflow by hand with a version (like `0.1.0-al
 
 ## Repository layout
 
-| Path              | What                                                                    |
-| ----------------- | ----------------------------------------------------------------------- |
-| `apps/desktop`    | Electron menu-bar app: SQLite, scheduler, popup, UI                     |
-| `packages/core`   | Shared types and schemas: events, alerts, rules, actions, action policy |
-| `packages/<name>` | Sensors, helper, detection engine, AI bridge, agent hook, benchmarks    |
-| `docs`            | AI agents, the pack, performance budget                                 |
-| `scripts`         | Repo checks                                                             |
+| Path              | What                                                                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop`    | Electron menu-bar app: SQLite, scheduler, popup, UI                                                                                                                     |
+| `packages/core`   | Shared types and schemas: events, alerts, rules, actions, action policy                                                                                                 |
+| `packages/<name>` | Sensors, helper, detection engine, AI bridge, agent hook, benchmarks                                                                                                    |
+| `docs`            | AI agents, the pack, performance budget, [design decisions](docs/decisions/README.md), [design data](docs/design/data.md), [routine reference](docs/routines/README.md) |
+| `scripts`         | Repo checks                                                                                                                                                             |
 
 ## Develop
 
