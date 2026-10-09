@@ -35,6 +35,9 @@ const REQUEST_REFILL_PER_SECOND = 20;
 // A connection that asks nothing for five minutes is cut; event
 // subscribers are exempt, since the helper writes to them unasked.
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+// After refusing a line the socket ends gracefully so the refusal is read
+// before any FIN; a peer that never closes its side is reaped after this long.
+const REFUSAL_LINGER_MS = 10_000;
 const SYNC_PREFIX = /^\{"id":"[^"\\]{1,200}","command":\{"kind":"detection\.sync"/;
 const ID_PREFIX = /^\{"id":"([^"\\]{1,200})"/;
 const RECENT_EVENTS = 2000;
@@ -162,9 +165,16 @@ export class HelperServer {
     };
     const cut = (): void => {
       closing = true;
-      // end() flushes the reply; destroying in its callback also stops the
-      // read side, so the connection can't keep feeding the buffer after.
-      sock.end(() => sock.destroy());
+      // The refusal must reach the client before the connection dies. A socket
+      // closed while inbound bytes it never read are still queued raises a TCP
+      // RST that can beat the queued reply (observed on macOS), so stop
+      // parsing, discard the backlog, and end cleanly — a backstop reaps a
+      // peer that never closes.
+      sock.removeAllListeners('data');
+      sock.resume();
+      sock.end();
+      const reap = setTimeout(() => sock.destroy(), REFUSAL_LINGER_MS);
+      sock.once('close', () => clearTimeout(reap));
     };
     const refuseAndCut = (line: string, error: string, code: ErrorCode): void => {
       if (closing) return;
