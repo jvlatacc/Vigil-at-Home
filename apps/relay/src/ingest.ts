@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gunzipSync } from 'node:zlib';
+import type { KeyedBuckets } from './ratelimit.js';
 import type { RelayStore } from './store.js';
+import { tokenHash } from './tokens.js';
 import { IngestRequest, type IngestAck } from './wire.js';
 
 /** POST /v1/ingest is the only write face. */
@@ -15,6 +17,8 @@ const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 export interface IngestContext {
   store: RelayStore;
   maxBodyBytes: number;
+  /** Checked before the body is read; keyed by token hash, or peer address. */
+  buckets: KeyedBuckets;
 }
 
 export function sendJson(
@@ -27,12 +31,48 @@ export function sendJson(
   res.end(JSON.stringify(body));
 }
 
-/** Handles one ingest POST: read, validate, store, ack. */
+/** The bearer secret from the Authorization header, if any. */
+export function bearerToken(req: IncomingMessage): string | undefined {
+  const header = req.headers.authorization;
+  if (header === undefined) return undefined;
+  const [scheme, token] = header.split(' ', 2);
+  if (scheme?.toLowerCase() !== 'bearer' || token === undefined || token === '') return undefined;
+  return token;
+}
+
+/** Handles one ingest POST: limit, authenticate, read, validate, store, ack. */
 export async function handleIngest(
   req: IncomingMessage,
   res: ServerResponse,
   ctx: IngestContext,
 ): Promise<void> {
+  // Rate limit first, before any parsing — a flood costs nothing but a
+  // bucket tick, like the agent socket.
+  const token = bearerToken(req);
+  const rateKey =
+    token !== undefined ? `t:${tokenHash(token)}` : `ip:${req.socket.remoteAddress ?? 'unknown'}`;
+  if (!ctx.buckets.allow(rateKey, Date.now())) {
+    sendJson(res, 429, { error: 'rate_limited' });
+    return;
+  }
+  // Two token classes: device tokens push (here); SOC tokens read over MCP
+  // and must not answer ingest. Secrets are compared by hash, never stored.
+  if (token === undefined) {
+    res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer' });
+    res.end(JSON.stringify({ error: 'missing_token' }));
+    return;
+  }
+  const stored = ctx.store.tokenByHash(tokenHash(token));
+  if (stored === undefined || stored.kind !== 'device') {
+    sendJson(res, 401, { error: 'unknown_token' });
+    return;
+  }
+  if (stored.revokedAt !== undefined) {
+    sendJson(res, 403, { error: 'token_revoked' });
+    return;
+  }
+  const deviceId = stored.deviceId;
+
   const body = await readBody(req, ctx.maxBodyBytes);
   if (body === 'too_large') {
     rejectBodyTooLarge(req, res);
@@ -71,7 +111,14 @@ export async function handleIngest(
     return;
   }
 
-  const outcome = ctx.store.applyBatch(parsed.data.deviceId, parsed.data.records, Date.now());
+  // A device token answers only for its own device: the batch's claim and
+  // the token's device must agree, so one laptop cannot write another's log.
+  if (deviceId === undefined || parsed.data.deviceId !== deviceId) {
+    sendJson(res, 403, { error: 'wrong_device' });
+    return;
+  }
+
+  const outcome = ctx.store.applyBatch(deviceId, parsed.data.records, Date.now());
   const ack: IngestAck = {
     v: 1,
     accepted: outcome.accepted,

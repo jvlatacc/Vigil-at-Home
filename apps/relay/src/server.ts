@@ -2,12 +2,14 @@ import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
 import { handleIngest, INGEST_PATH, sendJson } from './ingest.js';
+import { KeyedBuckets } from './ratelimit.js';
 import { RelayStore } from './store.js';
 import type { RelayConfig } from './config.js';
 
 export interface RelayServer {
   port: number;
   store: RelayStore;
+  buckets: KeyedBuckets;
   close(): Promise<void>;
 }
 
@@ -18,6 +20,10 @@ export interface RelayServer {
  */
 export function startRelay(config: RelayConfig, store?: RelayStore): Promise<RelayServer> {
   const ownedStore = store ?? new RelayStore(config.dataDir);
+  // House numbers from the agent socket: a steady 30 requests/s with room
+  // for bursts of 60 (the config's defaults), keyed per token so one noisy
+  // laptop cannot starve another. Checked before any body is read.
+  const buckets = new KeyedBuckets(config.ratePerSec, config.burst);
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
     const url = req.url ?? '/';
@@ -30,7 +36,11 @@ export function startRelay(config: RelayConfig, store?: RelayStore): Promise<Rel
         sendJson(res, 405, { error: 'method_not_allowed' });
         return;
       }
-      void handleIngest(req, res, { store: ownedStore, maxBodyBytes: config.maxBodyBytes });
+      void handleIngest(req, res, {
+        store: ownedStore,
+        maxBodyBytes: config.maxBodyBytes,
+        buckets,
+      });
       return;
     }
     sendJson(res, 404, { error: 'not_found' });
@@ -59,6 +69,7 @@ export function startRelay(config: RelayConfig, store?: RelayStore): Promise<Rel
       resolve({
         port,
         store: ownedStore,
+        buckets,
         close: () =>
           new Promise((done) => {
             // Drop idle keep-alive sockets (undici keeps them open) so a
