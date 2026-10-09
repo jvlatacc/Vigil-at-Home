@@ -157,7 +157,14 @@ overrides (dnf's stock defaults are reportedly the same 30 s/10 values —
 training knowledge, not verified this session — so expect the flags to be
 insurance, not a behavior change). If boot still fails on more than 1 of the
 next 4 runs, the next move is baking the systemd install into an image layer
-built in the job, not another parameter tweak.
+built in the job, not another parameter tweak. The final readiness check now
+accepts `running | degraded` — matching the poll exactly, after run
+37999738462 failed only because container systemd reported degraded (a state
+irrelevant to the workload: failed getty/sysctl units, not services the
+suite needs) — and when degraded it dumps `systemctl --failed --no-pager`
+and `journalctl -p err -b --no-pager | tail -40`, so a genuinely load-bearing
+failure (e.g. `vigil-helper.service`) is named in the log instead of guessed
+at; the integration suite remains the real gate.
 
 ### Registry move — Docker Hub throttling, and the shadow-perms catch
 

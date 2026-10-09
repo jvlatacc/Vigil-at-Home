@@ -186,9 +186,21 @@ jobs:
             case "$s" in running | degraded) break ;; esac
             sleep 2
           done
-          if ! docker exec vigil-rhel systemctl is-system-running; then
-            docker logs vigil-rhel | tail -50
-            exit 1
+          # Same acceptance as the poll: container systemd reports degraded
+          # for units irrelevant to the workload (getty, sysctl cruft). The
+          # integration suite below is the real gate; the dumps on degraded
+          # make a load-bearing failure (e.g. vigil-helper.service) visible.
+          s=$(docker exec vigil-rhel systemctl is-system-running 2>/dev/null || true)
+          case "$s" in
+            running | degraded) ;;
+            *)
+              docker logs vigil-rhel | tail -50
+              exit 1
+              ;;
+          esac
+          if [ "$s" = degraded ]; then
+            docker exec vigil-rhel systemctl --failed --no-pager | head -20
+            docker exec vigil-rhel journalctl -p err -b --no-pager | tail -40
           fi
       - name: Node.js and pnpm in the container
         run: |
