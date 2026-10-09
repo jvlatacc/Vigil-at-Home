@@ -220,6 +220,7 @@ describe('hub trust on Linux', () => {
       sink: (e) => got.push(e),
       santaLogPath: false,
       osqueryResultsPath: false,
+      kernelMonitorPath: false,
       trust: (p) =>
         p === '/usr/bin/curl'
           ? { signing: 'package', signingId: 'pkg:curl' }

@@ -11,6 +11,7 @@ import {
 } from './osquery/resultParser.js';
 import { DEFAULT_PATHS } from './santa/profile.js';
 import { OSQUERY_RESULTS_LOG } from './osquery/config.js';
+import { KERNEL_MONITOR_INDEX, parseOperationLine } from './kernel-monitor/parser.js';
 import type { SensorEvent, SensorEventSink } from './types.js';
 import { ProcessEnricher, type SignatureInfo } from './enrich.js';
 import { NetworkBurst, type OsqueryRunner } from './osquery/burst.js';
@@ -19,6 +20,13 @@ export interface SensorHubOptions {
   sink: SensorEventSink;
   santaLogPath?: string | false;
   osqueryResultsPath?: string | false;
+  /**
+   * The kernel-monitor daemon's operations index (Linux). This tail is the
+   * one reader that turns index lines into SensorEvents — the rsyslog file
+   * output is a separate copy for admins and collectors, and nothing tails
+   * both. false disables the tail.
+   */
+  kernelMonitorPath?: string | false;
   /** Saved positions so a restart resumes where it stopped instead of skipping or replaying. */
   positions?: Record<string, TailPosition>;
   onError?: (source: string, err: Error) => void;
@@ -58,6 +66,8 @@ export class SensorHub {
   private readonly activity: SensorActivity = { santa: null, osquery: null };
   private readonly enricher: ProcessEnricher;
   private readonly burst: NetworkBurst | undefined;
+  private kernelMonitorDropped = 0;
+  private kernelMonitorLastDrop: string | undefined;
 
   constructor(private readonly opts: SensorHubOptions) {
     const lookup = opts.signatureLookup;
@@ -78,6 +88,9 @@ export class SensorHub {
     if (santa) this.addTailer('santa', santa, (line) => this.onSantaLine(line));
     const osq = opts.osqueryResultsPath ?? OSQUERY_RESULTS_LOG;
     if (osq) this.addTailer('osquery', osq, (line) => this.onOsqueryLine(line));
+    const kernelMonitor = opts.kernelMonitorPath ?? KERNEL_MONITOR_INDEX;
+    if (kernelMonitor)
+      this.addTailer('kernel-monitor', kernelMonitor, (line) => this.onKernelMonitorLine(line));
   }
 
   private onSantaLine(line: string): void {
@@ -102,6 +115,24 @@ export class SensorHub {
       return;
     }
     for (const e of osqueryResultToEvents(line, parsed)) this.emit(e);
+  }
+
+  private onKernelMonitorLine(line: string): void {
+    const parsed = parseOperationLine(line);
+    if (!parsed.ok) {
+      // A line the daemon should not have written (a truncated write, an
+      // index from a newer build): dropped and counted, and the tail keeps
+      // reading — one bad line never stops ingestion.
+      this.kernelMonitorDropped++;
+      this.kernelMonitorLastDrop = parsed.reason;
+      return;
+    }
+    this.emit(parsed.event);
+  }
+
+  /** Invalid kernel-monitor index lines dropped since start, and the last one's reason. */
+  kernelMonitorDrops(): { dropped: number; lastReason: string | undefined } {
+    return { dropped: this.kernelMonitorDropped, lastReason: this.kernelMonitorLastDrop };
   }
 
   private addTailer(name: string, path: string, onLine: (line: string) => void): void {
