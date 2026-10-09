@@ -162,6 +162,14 @@ the full suite ran on Rocky 9:
   process survived the 60 s wait. The defect sits between launch ingestion
   and the hash/kill decision, and it is Rocky-specific; the rpm fix was
   verified in the setup tests but did not resolve it.
+- Once flow stopped blocking the run, `linux.integration.test.ts` surfaced
+  the next file's Debian-layout assumption: it asserted the helper reports
+  `/usr/bin/sleep` for a spawned sleep, but Rocky 9's default coreutils-single
+  makes `/usr/bin/sleep` a symlink to `/usr/bin/coreutils`, and
+  `/proc/<pid>/exe` resolves symlinks. The helper's kernel-verified identity
+  is correct behavior; the test now asserts kernel-consistency (identity
+  equals `readlink /proc/<pid>/exe`) and drives suspend/kill with that
+  resolved path, keeping the scenario fully exercised on both families.
 
 Per the maintainer's decision, the scenario is conditionally skipped on the
 dnf family (`it.skipIf(dnfFamily)` with a loud reason naming the task) so
