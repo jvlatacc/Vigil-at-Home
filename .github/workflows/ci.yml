@@ -145,16 +145,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Start Rocky Linux 9 with systemd
         run: |
+          # The official images ship systemd without the init symlink (learned
+          # from the first CI run: "exec: /usr/sbin/init: no such file or
+          # directory"). Boot by binary path, installing the package first
+          # only if the image lacks the binary; exec makes systemd PID 1.
           docker run -d --name vigil-rhel --privileged --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
-            rockylinux:9 /usr/sbin/init >/dev/null
+            rockylinux:9 /bin/bash -euc '
+            if [ ! -x /usr/lib/systemd/systemd ]; then
+              dnf install -y systemd
+            fi
+            exec /usr/lib/systemd/systemd --system
+          ' >/dev/null
           for i in $(seq 1 60); do
             s=$(docker exec vigil-rhel systemctl is-system-running 2>/dev/null || true)
             case "$s" in running | degraded) break ;; esac
             sleep 2
           done
-          docker exec vigil-rhel systemctl is-system-running
+          if ! docker exec vigil-rhel systemctl is-system-running; then
+            docker logs vigil-rhel | tail -50
+            exit 1
+          fi
       - name: Node.js and pnpm in the container
         run: |
           docker exec vigil-rhel /bin/bash -euc '
@@ -181,16 +193,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Start Debian 12 with systemd
         run: |
+          # Same boot-by-binary-path pattern as the Rocky job above — the
+          # official images ship systemd without the init symlink.
           docker run -d --name vigil-deb --privileged --cgroupns=host \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
-            debian:bookworm /usr/sbin/init >/dev/null
+            debian:bookworm /bin/bash -euc '
+            if [ ! -x /usr/lib/systemd/systemd ]; then
+              apt-get update
+              apt-get install -y systemd
+            fi
+            exec /usr/lib/systemd/systemd --system
+          ' >/dev/null
           for i in $(seq 1 60); do
             s=$(docker exec vigil-deb systemctl is-system-running 2>/dev/null || true)
             case "$s" in running | degraded) break ;; esac
             sleep 2
           done
-          docker exec vigil-deb systemctl is-system-running
+          if ! docker exec vigil-deb systemctl is-system-running; then
+            docker logs vigil-deb | tail -50
+            exit 1
+          fi
       - name: Node.js and pnpm in the container
         run: |
           docker exec vigil-deb /bin/bash -euc '
