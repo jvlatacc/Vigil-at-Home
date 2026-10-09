@@ -9,6 +9,7 @@ coverage/
 .env.*
 e2e-results/
 /apps/desktop/build/
+/apps/relay/build/
 perf-results/
 agents-results/
 bench-results/
