@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { compareVersions, isLinuxPackage, newest, UpdateChecker } from './updates.js';
+import { describe, expect, it, vi } from 'vitest';
+import { UPSTREAM_REPO } from './update-repo.js';
+import { compareVersions, isLinuxPackage, newest, releasesUrl, UpdateChecker } from './updates.js';
 
 const release = (tag: string, o: { draft?: boolean; prerelease?: boolean } = {}) => ({
   tag_name: `v${tag}`,
@@ -32,18 +33,23 @@ describe('newest', () => {
       ],
       '0.1.0-alpha.2',
       'arm64',
+      UPSTREAM_REPO,
     );
     expect(a?.version).toBe('0.1.0-alpha.4');
     expect(a?.downloadUrl).toMatch(/-arm64\.dmg$/);
-    expect(newest([release('0.1.0-alpha.3')], '0.1.0-alpha.2', 'x64')?.downloadUrl).toMatch(
-      /-x64\.dmg$/,
-    );
+    expect(
+      newest([release('0.1.0-alpha.3')], '0.1.0-alpha.2', 'x64', UPSTREAM_REPO)?.downloadUrl,
+    ).toMatch(/-x64\.dmg$/);
   });
 
   it('says nothing when this is the newest, and skips pre-releases on a full release', () => {
-    expect(newest([release('0.1.0-alpha.2')], '0.1.0-alpha.2', 'arm64')).toBeUndefined();
-    expect(newest([release('0.2.0-alpha.1'), release('0.1.0')], '0.1.0', 'arm64')).toBeUndefined();
-    expect(newest([release('0.1.1')], '0.1.0', 'arm64')?.version).toBe('0.1.1');
+    expect(
+      newest([release('0.1.0-alpha.2')], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO),
+    ).toBeUndefined();
+    expect(
+      newest([release('0.2.0-alpha.1'), release('0.1.0')], '0.1.0', 'arm64', UPSTREAM_REPO),
+    ).toBeUndefined();
+    expect(newest([release('0.1.1')], '0.1.0', 'arm64', UPSTREAM_REPO)?.version).toBe('0.1.1');
   });
 
   it('offers pre-releases to a full-release build while no full release is published', () => {
@@ -52,20 +58,22 @@ describe('newest', () => {
       release('0.1.0-alpha.3'),
       { ...release('0.1.0-alpha.1'), tag_name: '0.1.0-alpha.1', assets: [] },
     ];
-    expect(newest(list, '0.0.1', 'arm64')).toMatchObject({
+    expect(newest(list, '0.0.1', 'arm64', UPSTREAM_REPO)).toMatchObject({
       version: '0.1.0-alpha.3',
       downloadUrl: expect.stringMatching(/0\.1\.0-alpha\.3-arm64\.dmg$/),
     });
     // A published full release ends that: pre-releases stay hidden on 0.0.1 again.
-    expect(newest([...list, release('0.0.2')], '0.0.1', 'arm64')?.version).toBe('0.0.2');
+    expect(newest([...list, release('0.0.2')], '0.0.1', 'arm64', UPSTREAM_REPO)?.version).toBe(
+      '0.0.2',
+    );
   });
 
   it('ignores links that are not github.com', () => {
     const r = release('0.1.0-alpha.3');
     r.assets[0]!.browser_download_url = 'https://example.com/Vigil-at-Home-0.1.0-alpha.3-arm64.dmg';
-    expect(newest([r], '0.1.0-alpha.2', 'arm64')?.downloadUrl).toBeUndefined();
+    expect(newest([r], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO)?.downloadUrl).toBeUndefined();
     expect(
-      newest([{ ...r, html_url: 'https://evil.test/x' }], '0.1.0-alpha.2', 'arm64'),
+      newest([{ ...r, html_url: 'https://evil.test/x' }], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO),
     ).toBeUndefined();
   });
 
@@ -75,33 +83,61 @@ describe('newest', () => {
       'ShmalexM/Vigil-at-Home',
       'someone/else',
     );
-    expect(newest([r], '0.1.0-alpha.2', 'arm64')?.downloadUrl).toBeUndefined();
+    expect(newest([r], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO)?.downloadUrl).toBeUndefined();
     const other = { ...r, html_url: 'https://github.com/someone/else/releases/tag/v0.1.0-alpha.3' };
-    expect(newest([other], '0.1.0-alpha.2', 'arm64')).toBeUndefined();
+    expect(newest([other], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO)).toBeUndefined();
     // GitHub owner and repo names are not case-sensitive.
     const lower = { ...release('0.1.0-alpha.3') };
     lower.html_url = lower.html_url.replace('ShmalexM/Vigil-at-Home', 'shmalexm/vigil-at-home');
-    expect(newest([lower], '0.1.0-alpha.2', 'arm64')?.version).toBe('0.1.0-alpha.3');
+    expect(newest([lower], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO)?.version).toBe('0.1.0-alpha.3');
+  });
+
+  it('accepts links of the configured repo only', () => {
+    const fork = 'jvlatacc/Vigil-at-Home';
+    const r = release('0.1.0-alpha.3');
+    const forked = {
+      ...r,
+      html_url: r.html_url.replace(UPSTREAM_REPO, fork),
+      assets: r.assets.map((a) => ({
+        ...a,
+        browser_download_url: a.browser_download_url.replace(UPSTREAM_REPO, fork),
+      })),
+    };
+    // A fork that names its own repo as the update source gets its own releases.
+    expect(newest([forked], '0.1.0-alpha.2', 'arm64', fork)?.version).toBe('0.1.0-alpha.3');
+    // The same links are strangers to upstream.
+    expect(newest([forked], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO)).toBeUndefined();
   });
 });
 
 describe('UpdateChecker', () => {
-  function checker(body: unknown, ok = true) {
+  function checker(body: unknown, ok = true, repo: string | null = UPSTREAM_REPO) {
     let saved: unknown = {};
     const opened: string[] = [];
     const found: string[] = [];
+    const fetched: string[] = [];
     const c = new UpdateChecker({
       current: '0.1.0-alpha.2',
       arch: 'arm64',
+      repo,
       load: () => saved,
       save: (s) => void (saved = s),
-      fetch: (async () => ({ ok, status: ok ? 200 : 403, json: async () => body })) as never,
+      fetch: (async (url: string | URL) => {
+        fetched.push(String(url));
+        return { ok, status: ok ? 200 : 403, json: async () => body };
+      }) as never,
       openExternal: async (u) => void opened.push(u),
       onFound: (v) => found.push(v),
       now: () => 1000,
     });
-    return { c, opened, found };
+    return { c, opened, found, fetched };
   }
+
+  it('asks the build’s repo for its published releases', async () => {
+    const { c, fetched } = checker([release('0.1.0-alpha.3')]);
+    await c.check();
+    expect(fetched).toEqual([releasesUrl(UPSTREAM_REPO)]);
+  });
 
   it('finds an update, tells once, downloads the DMG, and remembers Later', async () => {
     const { c, opened, found } = checker([release('0.1.0-alpha.3')]);
@@ -131,6 +167,36 @@ describe('UpdateChecker', () => {
     const { c } = checker(null, false);
     expect((await c.check()).error).toMatch(/403/);
   });
+
+  it('checks nothing in a fork build: no fetch, no error, no timers', async () => {
+    const { c, fetched, found } = checker([release('0.1.0-alpha.3')], true, null);
+    const v = await c.check();
+    expect(v.available).toBeUndefined();
+    expect(v.error).toBeUndefined();
+    expect(v.lastCheckedAt).toBeUndefined();
+    expect(found).toEqual([]);
+    expect(fetched).toEqual([]);
+    vi.useFakeTimers();
+    try {
+      c.start();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('schedules the automatic checks for an upstream build', () => {
+    vi.useFakeTimers();
+    try {
+      const { c } = checker([]);
+      c.start();
+      expect(vi.getTimerCount()).toBe(2);
+      c.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('newest on Linux', () => {
@@ -146,14 +212,19 @@ describe('newest on Linux', () => {
   };
 
   it('only counts a release with a package for this chip', () => {
-    expect(newest([release('0.1.0-alpha.3')], '0.1.0-alpha.2', 'x64', 'linux')).toBeUndefined();
-    expect(newest([withLinux('0.1.0-alpha.3')], '0.1.0-alpha.2', 'arm64', 'linux')).toBeUndefined();
+    expect(
+      newest([release('0.1.0-alpha.3')], '0.1.0-alpha.2', 'x64', UPSTREAM_REPO, 'linux'),
+    ).toBeUndefined();
+    expect(
+      newest([withLinux('0.1.0-alpha.3')], '0.1.0-alpha.2', 'arm64', UPSTREAM_REPO, 'linux'),
+    ).toBeUndefined();
     // A newer Mac-only release doesn't hide the newest one Linux can install.
     expect(
       newest(
         [release('0.1.0-alpha.4'), withLinux('0.1.0-alpha.3')],
         '0.1.0-alpha.2',
         'x64',
+        UPSTREAM_REPO,
         'linux',
       )?.version,
     ).toBe('0.1.0-alpha.3');
@@ -162,7 +233,7 @@ describe('newest on Linux', () => {
   });
 
   it('never offers a Mac DMG to an x64 Linux machine: the release page opens instead', () => {
-    const a = newest([withLinux('0.1.0-alpha.3')], '0.1.0-alpha.2', 'x64', 'linux');
+    const a = newest([withLinux('0.1.0-alpha.3')], '0.1.0-alpha.2', 'x64', UPSTREAM_REPO, 'linux');
     expect(a?.version).toBe('0.1.0-alpha.3');
     expect(a?.downloadUrl).toBeUndefined();
     expect(a?.notesUrl).toMatch(/^https:\/\/github\.com\//);
