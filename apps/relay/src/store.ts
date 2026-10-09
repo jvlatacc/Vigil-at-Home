@@ -6,9 +6,12 @@ import { newToken, tokenHash, type TokenKind } from './tokens.js';
 
 /**
  * The streams retention evicts, oldest first. Rule snapshots are missing on
- * purpose: they are current state, not history.
+ * purpose: they are current state, not history. The relay_ prefix keeps
+ * these tables distinct from the app's own events/alerts/actions tables —
+ * repo-wide scans (like the desktop store test) must not mistake a write
+ * to the relay's copy for one to the app's store.
  */
-const STREAM_TABLES = ['events', 'alerts', 'actions'] as const;
+const STREAM_TABLES = ['relay_events', 'relay_alerts', 'relay_actions'] as const;
 type StreamTable = (typeof STREAM_TABLES)[number];
 
 /**
@@ -21,32 +24,32 @@ type StreamTable = (typeof STREAM_TABLES)[number];
  */
 const migrations: string[] = [
   `
-  CREATE TABLE events (
+  CREATE TABLE relay_events (
     device_id TEXT NOT NULL,
     id TEXT NOT NULL,
     ts INTEGER NOT NULL,
     body TEXT NOT NULL,
     PRIMARY KEY (device_id, id)
   );
-  CREATE INDEX events_ts ON events (ts);
+  CREATE INDEX relay_events_ts ON relay_events (ts);
 
-  CREATE TABLE alerts (
+  CREATE TABLE relay_alerts (
     device_id TEXT NOT NULL,
     id TEXT NOT NULL,
     ts INTEGER NOT NULL,
     body TEXT NOT NULL,
     PRIMARY KEY (device_id, id)
   );
-  CREATE INDEX alerts_ts ON alerts (ts);
+  CREATE INDEX relay_alerts_ts ON relay_alerts (ts);
 
-  CREATE TABLE actions (
+  CREATE TABLE relay_actions (
     device_id TEXT NOT NULL,
     id TEXT NOT NULL,
     ts INTEGER NOT NULL,
     body TEXT NOT NULL,
     PRIMARY KEY (device_id, id)
   );
-  CREATE INDEX actions_ts ON actions (ts);
+  CREATE INDEX relay_actions_ts ON relay_actions (ts);
 
   -- One rules snapshot per device: the newest version wins, older ones are
   -- state, not a stream, so they don't take part in stream retention.
@@ -185,13 +188,13 @@ export class RelayStore {
     );
     this.deleteDevice = this.db.prepare('DELETE FROM devices WHERE id = ?');
     this.insertEvent = this.db.prepare(
-      'INSERT OR IGNORE INTO events (device_id, id, ts, body) VALUES (?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO relay_events (device_id, id, ts, body) VALUES (?, ?, ?, ?)',
     );
     this.insertAlert = this.db.prepare(
-      'INSERT OR IGNORE INTO alerts (device_id, id, ts, body) VALUES (?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO relay_alerts (device_id, id, ts, body) VALUES (?, ?, ?, ?)',
     );
     this.insertAction = this.db.prepare(
-      'INSERT OR IGNORE INTO actions (device_id, id, ts, body) VALUES (?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO relay_actions (device_id, id, ts, body) VALUES (?, ?, ?, ?)',
     );
     this.upsertRule = this.db.prepare(
       `INSERT INTO rule_snapshots (device_id, id, version, ts, body) VALUES (?, ?, ?, ?, ?)
@@ -321,9 +324,9 @@ export class RelayStore {
   stats(): RelayStats {
     return {
       devices: this.count('devices'),
-      events: this.count('events'),
-      alerts: this.count('alerts'),
-      actions: this.count('actions'),
+      events: this.count('relay_events'),
+      alerts: this.count('relay_alerts'),
+      actions: this.count('relay_actions'),
       rules: this.count('rule_snapshots'),
       usageBytes: this.diskUsageBytes(),
     };
