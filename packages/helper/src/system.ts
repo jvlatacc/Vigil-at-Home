@@ -38,6 +38,13 @@ export const LINUX_BINARIES = {
   chattr: '/usr/bin/chattr',
   id: '/usr/bin/id',
   osqueryd: '/opt/osquery/bin/osqueryd',
+  /**
+   * ss(8), which pairs a connected Unix socket with the pid that owns it
+   * (peer.ts). Fedora and Debian before the sbin merge put it in /usr/sbin,
+   * newer Debian and Ubuntu in /usr/bin; both names are tried.
+   */
+  ss: '/usr/sbin/ss',
+  ssUsrBin: '/usr/bin/ss',
 } as const;
 
 export type MacBinaryName = keyof typeof BINARIES;
