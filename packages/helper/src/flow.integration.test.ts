@@ -364,9 +364,22 @@ describe.skipIf(!run)('Vigil on real Linux, app closed', () => {
     const report = () => seen.find((s) => s.e.kind === 'process.exec' && s.e.process.pid === pid);
     if (killed) await waitUntil(() => !!report(), 10_000, 100);
     const ran = report()?.ran;
+    // Did osquery ever report the stand-in's launch? Its rows carry the
+    // stand-in's temp dir in their path, so count them in the results log.
+    let standInRows: string;
+    try {
+      standInRows = String(
+        readFileSync('/var/log/osquery/osqueryd.results.log', 'utf8')
+          .split('\n')
+          .filter((l) => l.includes(dir)).length,
+      );
+    } catch {
+      standInRows = 'unreadable';
+    }
     expect(
       killed,
-      `still running; helper ran ${JSON.stringify(ran)}; launches seen: ${launchesSeen}\n` +
+      `still running; helper ran ${JSON.stringify(ran)}; launches seen: ${launchesSeen}; ` +
+        `stand-in rows in the results log: ${standInRows}\n` +
         `${logs.join('\n')}\n${osqueryDiagnosis()}\nosquery eBPF probe:\n${killed ? '' : await bpfProbe()}`,
     ).toBe(true);
     console.log(`launch to kill: ${Date.now() - t0} ms`);

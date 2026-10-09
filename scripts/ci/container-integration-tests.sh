@@ -13,6 +13,20 @@ if [ ${#files[@]} -eq 0 ]; then
   exit 0
 fi
 printf 'Running %s\n' "${files[@]}"
+
+# When a file fails, the service journals say why: fapolicyd's compile or
+# enforcing state, osqueryd's BPF publisher, the helper's socket. Dump them
+# before the exit, then re-raise the original status.
+dump_journals() {
+  status=$?
+  echo "::group::diagnostics: service journals after failure"
+  systemctl status fapolicyd osqueryd vigil-helper --no-pager || true
+  journalctl -u fapolicyd -u osqueryd -u vigil-helper --no-pager | tail -n 150 || true
+  echo "::endgroup::"
+  exit "$status"
+}
+trap dump_journals ERR
+
 for f in "${files[@]}"; do
   echo "::group::$f"
   VIGIL_LINUX_INTEGRATION=1 pnpm vitest run "$f"

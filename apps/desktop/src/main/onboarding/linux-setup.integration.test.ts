@@ -50,11 +50,13 @@ describe.skipIf(!enabled)('Linux setup commands', () => {
       expect(await CHECKS.fapolicyd(systemProbe())).toEqual({ ok: true });
       // Enforcing right away, with no package hashing first.
       expect(readFileSync('/etc/fapolicyd/fapolicyd.conf', 'utf8')).toMatch(/^trust = file$/m);
+      // fapolicyd compiles its trust database on first start; in a fresh
+      // container that has taken over a minute on 1.1.x, so allow two.
       const answers = spawnSync('sh', [
         '-c',
-        'for i in $(seq 15); do fapolicyd-cli --check-status >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1',
+        'for i in $(seq 60); do fapolicyd-cli --check-status >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1',
       ]);
-      expect(answers.status, 'fapolicyd is not enforcing 30 s after starting').toBe(0);
+      expect(answers.status, 'fapolicyd is not enforcing 2 min after starting').toBe(0);
       // A program no package manager knows about still runs.
       const dir = mkdtempSync(join(tmpdir(), 'vigil-untrusted-'));
       const prog = join(dir, 'untrusted-true');
