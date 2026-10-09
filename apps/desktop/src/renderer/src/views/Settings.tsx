@@ -7,6 +7,7 @@ import { Button, Card, SectionHead } from '../components/ui';
 import { aboutText, systemName } from './about';
 import { AiSection } from './Ai';
 import { AppearanceSection } from './Appearance';
+import { SocSection } from './Soc';
 import { ThreatFeedsSection } from './ThreatFeeds';
 import { UpdatesRow } from './Updates';
 import { ADVANCED_NAV, PageHead } from './AppShell';
@@ -108,6 +109,9 @@ export function SettingsView({ go }: { go: (r: string) => void }) {
         </Card>
         <Card>
           <ThreatFeedsSection />
+        </Card>
+        <Card>
+          <SocSection />
         </Card>
         <Card>
           <SectionHead

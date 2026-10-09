@@ -13,6 +13,8 @@ import type { FeedKeyStore } from './onboarding/keys.js';
 import { keyedFeeds, type FeedKeysView } from '../shared/setup.js';
 import { onboardingHandlers } from './onboarding/ipc.js';
 import type { OnboardingService } from './onboarding/service.js';
+import type { SocForwarder } from './soc/forwarder.js';
+import type { SocSettingsStore } from './soc/settings.js';
 import type { VigilCore } from './service.js';
 import { sendTestAlert } from './test-alert.js';
 import { isAppFrame, type Windows } from './windows.js';
@@ -44,6 +46,7 @@ export function registerIpc(
   agents: AgentService,
   pack: { service: PackService; connectors: Connectors },
   feedKeys: FeedKeyStore,
+  soc: { keys: SocSettingsStore; forwarder: SocForwarder },
   helper: HelperControl = noHelper,
 ): void {
   let ruleSuggestions: RuleSuggestions | undefined;
@@ -191,6 +194,11 @@ export function registerIpc(
           };
     },
     stopSharingCodexSignIn: () => ai.stopSharingCodexSignIn(),
+    // SOC export — the switch, the endpoint, the key, and one manual flush.
+    getSoc: () => soc.keys.view(),
+    setSoc: (patch) => soc.keys.set(patch),
+    clearSocKey: () => soc.keys.clearKey(),
+    flushSoc: () => soc.forwarder.flushNow(),
     ...agentsHandlers(agents),
     ...packHandlers(pack.service, pack.connectors),
   };
