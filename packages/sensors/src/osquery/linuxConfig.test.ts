@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { OSQUERYD_CANDIDATES, resolveOsqueryd } from './linuxConfig.js';
 
@@ -32,8 +35,17 @@ describe('osqueryd candidates on Linux', () => {
   });
 
   it('falls back to the real filesystem probe', () => {
-    // /usr/bin/ls exists everywhere this test runs.
-    expect(resolveOsqueryd(['/usr/bin/ls', '/nowhere/osqueryd'])).toBe('/usr/bin/ls');
+    // Probe a file the test creates itself, with the real existsSync — no
+    // assumption about what the host filesystem happens to contain (macOS
+    // has no /usr/bin/ls, and runners differ).
+    const dir = mkdtempSync(join(tmpdir(), 'vigil-osqueryd-'));
+    const probe = join(dir, 'osqueryd');
+    writeFileSync(probe, '#!/bin/sh\n');
+    try {
+      expect(resolveOsqueryd([probe, '/nowhere/osqueryd'])).toBe(probe);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
     expect(resolveOsqueryd(['/nowhere/osqueryd'])).toBeUndefined();
   });
 });
