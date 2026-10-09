@@ -4,3 +4,4 @@ export * from './action.js';
 export * from './rule.js';
 export * from './alert.js';
 export * from './agent.js';
+export * from './relay.js';
