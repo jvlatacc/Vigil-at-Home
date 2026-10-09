@@ -201,28 +201,40 @@ async function fapolicyd(p: HealthProbe, helperState: HelperState): Promise<Sens
 }
 
 /**
- * The threat-feeds line, present only while a feed's last update was refused
- * for shrinking its list too far. It stays `ok` with a note, so it never lowers
- * the protection level, badges or pops anything up: the old list is still in use.
+ * The threat-feeds line, present while a feed's last update was refused for
+ * shrinking its list too far, or while a promotion more than doubled a list
+ * (unusual growth). It stays `ok` with a note, so it never lowers the
+ * protection level, badges or pops anything up: the old list is still in use,
+ * and new entries wait out their confirm window before they can block anything.
  */
 export function feedHealth(
-  feeds: readonly { name: string; heldBack?: boolean }[],
+  feeds: readonly { name: string; heldBack?: boolean; growthAlert?: boolean }[],
 ): SensorHealth | undefined {
   const held = feeds.filter((f) => f.heldBack).map((f) => f.name);
-  if (!held.length) return undefined;
+  const grown = feeds.filter((f) => f.growthAlert).map((f) => f.name);
+  if (!held.length && !grown.length) return undefined;
+  const notes: string[] = [];
+  if (held.length)
+    notes.push(
+      `Stale: ${held.join(', ')} kept ${held.length === 1 ? 'its' : 'their'} last list; the new one looked broken`,
+    );
+  if (grown.length)
+    notes.push(
+      `Unusual growth: ${grown.join(', ')} listed many new entries at once; they wait before anything is blocked`,
+    );
   return {
     id: 'threat-feeds',
     name: 'Threat feeds',
     detail: 'Known-bad lists refreshed in the background',
     state: 'ok',
-    note: `Stale: ${held.join(', ')} kept ${held.length === 1 ? 'its' : 'their'} last list; the new one looked broken`,
+    note: notes.join('. '),
   };
 }
 
 /** Put the threat-feeds line in the registry, or take it out, only when it changes. */
 export function reportFeedHealth(
   registry: SensorRegistry,
-  feeds: readonly { name: string; heldBack?: boolean }[],
+  feeds: readonly { name: string; heldBack?: boolean; growthAlert?: boolean }[],
 ): void {
   const h = feedHealth(feeds);
   const prev = registry.get('threat-feeds');
