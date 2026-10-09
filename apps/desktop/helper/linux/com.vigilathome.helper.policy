@@ -2,9 +2,12 @@
 <!DOCTYPE policyconfig PUBLIC
  "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
-<!-- Lets Vigil at Home ask for your password before the helper undoes a block.
-     pkexec runs only `/usr/libexec/vigil-helper approve <nonce>…`, and only
-     after an administrator's password, every time. -->
+<!-- Lets Vigil at Home ask for your password before its helper is installed,
+     updated or removed, and before the helper undoes a block. The exec.path
+     annotations below constrain which PROGRAM pkexec may run for each action -
+     not its arguments: every invocation of those programs matches, and each
+     program is safe to run with a password. Each action asks for an
+     administrator's password every time. -->
 <policyconfig>
   <vendor>Vigil at Home</vendor>
   <action id="com.vigilathome.helper.approve">
@@ -16,5 +19,15 @@
       <allow_active>auth_admin</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/vigil-helper</annotate>
+  </action>
+  <action id="com.vigilathome.helper.install">
+    <description>Install, update or remove the Vigil at Home helper</description>
+    <message>Vigil at Home wants to install, update or remove its helper, which watches what runs on this computer and blocks threats. Enter your password to allow this.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/vigil-helper-launcher</annotate>
   </action>
 </policyconfig>

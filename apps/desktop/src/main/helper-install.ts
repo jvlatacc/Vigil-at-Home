@@ -280,6 +280,7 @@ export function helperScriptFiles(
           'node',
           'helper.mjs',
           'linux/vigil-helper',
+          'linux/vigil-helper-launcher',
           'linux/vigil-helper.service',
           'linux/com.vigilathome.helper.policy',
         ];
@@ -348,6 +349,26 @@ export function rootStageScript(platform: NodeJS.Platform = process.platform): s
 const ROOT_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 
 export const ROOT_SHELL = ['/usr/bin/env', '-i', `PATH=${ROOT_PATH}`, '/bin/sh', '-c'] as const;
+
+/**
+ * Where install.sh puts the root-owned launcher that pkexec runs for the
+ * Vigil-named install action. Absent until the first install has happened.
+ */
+export const HELPER_LAUNCHER = '/usr/libexec/vigil-helper-launcher';
+
+/**
+ * The argv after `pkexec` that installs or removes the helper. When a helper
+ * is already installed, its root-owned launcher runs the staged files, so the
+ * password dialog names Vigil; pkexec constrains the program to that launcher
+ * (com.vigilathome.helper.install). For a first install no launcher exists
+ * yet, so the staged script runs under a bare shell - the one dialog that
+ * cannot name Vigil is the one asking to install Vigil. The arguments after
+ * the program are the same either way (the stage dir, script, digest, app,
+ * files) - see rootStageScript.
+ */
+export function installArgv(launcher: string | undefined, digested: readonly string[]): string[] {
+  return launcher ? [launcher, ...digested] : [...ROOT_SHELL, rootStageScript('linux'), ...digested];
+}
 
 /** The arguments after `sh -c <rootStageScript>` that run `kind` from `from`. */
 function stageArgs(
@@ -452,7 +473,8 @@ async function runWithPkexec(
     return { ok: false, error: 'This build of Vigil is missing some of the helper’s files' };
   }
   try {
-    const out = await run(PKEXEC, [...ROOT_SHELL, rootStageScript('linux'), ...digested]);
+    const launcher = existsSync(HELPER_LAUNCHER) ? HELPER_LAUNCHER : undefined;
+    const out = await run(PKEXEC, installArgv(launcher, digested));
     if (out.code === 0) return { ok: true };
     if (out.missing) {
       return {
