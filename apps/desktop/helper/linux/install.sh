@@ -30,6 +30,9 @@ command -v systemctl >/dev/null || { echo "The helper needs systemd." >&2; exit 
 # Copy the new files first, then stop the running copy, if any, and swap them
 # in, so an update leaves the helper stopped for as short a time as possible.
 install -d -o root -g root -m 755 "$LIBEXEC"
+# The unit's ReadWritePaths names this, so it must exist before the service
+# first starts under ProtectSystem=strict.
+install -d -o root -g root -m 755 /var/lib/vigil
 rm -rf "$DEST.new"
 install -d -o root -g root -m 755 "$DEST.new"
 install -o root -g root -m 755 "$SRC/node" "$DEST.new/node"

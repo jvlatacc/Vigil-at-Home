@@ -8,5 +8,41 @@ ExecStart=/usr/libexec/vigil-helper daemon
 Restart=on-failure
 RestartSec=5
 
+# The helper runs as root with input from every process in the session (the
+# 0600 socket is the trust boundary), so a defect in the bundled Node runtime
+# must not be a full root compromise. These directives bound what a helper bug
+# can touch; install.sh creates /var/lib/vigil so the ReadWritePaths always
+# resolve on first boot. The set is finalized behaviorally: the root
+# integration suite (apps/desktop/src/main/helper-install.integration.test.ts
+# and packages/helper's *.integration.test.ts) must stay green with it.
+#
+# Quarantine is the reason two directives stay off: the helper moves files out
+# of user-writable places — /home, /root and /tmp above all — into its
+# quarantine store. PrivateTmp would hide the real /tmp and ProtectHome would
+# hide /home and /root (or make them read-only), breaking the moves it exists
+# to make. Everything else on disk is read-only to the helper.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/vigil /run /tmp /var/tmp -/home -/root -/opt -/usr/local -/srv -/mnt -/media -/etc/fapolicyd -/etc/osquery -/var/log/osquery
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+CapabilityBoundingSet=CAP_KILL CAP_NET_ADMIN CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_LINUX_IMMUTABLE CAP_SYS_PTRACE
+SystemCallFilter=@system-service
+# Unknown syscalls return EPERM rather than killing the process: the bundled
+# Node runtime (and libuv's io_uring probe) then degrades instead of dying.
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+UMask=0077
+
 [Install]
 WantedBy=multi-user.target
