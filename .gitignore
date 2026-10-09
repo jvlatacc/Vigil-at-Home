@@ -7,6 +7,14 @@ coverage/
 *.log
 .env
 .env.*
+
+# Signing key material — never commit
+*.pem
+*.key
+*.p12
+*.p8
+AuthKey_*
+
 e2e-results/
 /apps/desktop/build/
 perf-results/
