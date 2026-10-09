@@ -36,8 +36,9 @@ jobs:
 
   linux:
     # Root-only Linux integration tests (nftables blocks, process signals). Each
-    # one is a *.integration.test.ts under a package's src/ and skips itself
-    # unless VIGIL_LINUX_INTEGRATION=1, so the plain test run above ignores it.
+    # one is a *.integration.test.ts under apps/ or packages/, in their src/,
+    # and skips itself unless VIGIL_LINUX_INTEGRATION=1, so the plain test run
+    # above ignores it.
     runs-on: ubuntu-latest
     # A full run takes about 10 minutes; a hang must not hold a runner for hours.
     timeout-minutes: 30
@@ -125,3 +126,83 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
       - name: Bats fragment and flag contracts
         run: bats appliance/opnsense/tests
+  # Both container jobs below run the same root integration suite in a distro
+  # whose /etc/os-release picks a different branch of setup's commands, reusing
+  # scripts/ci/container-integration-tests.sh (the ubuntu job's loop). They are
+  # privileged so fapolicyd (fanotify) and osquery (eBPF) reach the runner's
+  # kernel, and systemd runs as PID 1 for the services the tests install and
+  # restart. scripts/validate-linux.sh --self-test also runs here unprivileged
+  # in the check job, via its vitest wrapper.
+
+  linux-dnf:
+    # Gap G1: the dnf-family branch of setup's commands had never executed
+    # anywhere — the setup test skipped every non-debian system. Rocky Linux 9
+    # is RHEL lineage (dnf, fapolicyd 1.4.x), the family the validation matrix
+    # marks tier B (gap analysis §5.1).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Start Rocky Linux 9 with systemd
+        run: |
+          docker run -d --name vigil-rhel --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            rockylinux:9 /usr/sbin/init >/dev/null
+          for i in $(seq 1 60); do
+            s=$(docker exec vigil-rhel systemctl is-system-running 2>/dev/null || true)
+            case "$s" in running | degraded) break ;; esac
+            sleep 2
+          done
+          docker exec vigil-rhel systemctl is-system-running
+      - name: Node.js and pnpm in the container
+        run: |
+          docker exec vigil-rhel /bin/bash -euc '
+            dnf install -y git-core nftables procps-ng findutils sudo curl ca-certificates
+            curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+            dnf install -y nodejs
+            # The major tracks packageManager in package.json (pnpm 10 today).
+            npm install -g pnpm@10
+            git config --global --add safe.directory /workspace
+          '
+      - name: Install dependencies
+        run: docker exec -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -w /workspace vigil-rhel pnpm install --frozen-lockfile
+      - name: Root integration tests (dnf family)
+        run: docker exec -w /workspace vigil-rhel /bin/bash scripts/ci/container-integration-tests.sh
+
+  linux-debian:
+    # Debian 12 next to the Ubuntu anchor: same apt branch, but an older
+    # fapolicyd (1.1.x) and glibc than the runner's Ubuntu 24.04 — the version
+    # floor the docs must state, exercised rather than asserted. Costs one more
+    # container build; drop this job if it proves flaky for version reasons.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Start Debian 12 with systemd
+        run: |
+          docker run -d --name vigil-deb --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            debian:bookworm /usr/sbin/init >/dev/null
+          for i in $(seq 1 60); do
+            s=$(docker exec vigil-deb systemctl is-system-running 2>/dev/null || true)
+            case "$s" in running | degraded) break ;; esac
+            sleep 2
+          done
+          docker exec vigil-deb systemctl is-system-running
+      - name: Node.js and pnpm in the container
+        run: |
+          docker exec vigil-deb /bin/bash -euc '
+            apt-get update
+            apt-get install -y curl ca-certificates git nftables procps sudo
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+            apt-get install -y nodejs
+            # The major tracks packageManager in package.json (pnpm 10 today).
+            npm install -g pnpm@10
+            git config --global --add safe.directory /workspace
+          '
+      - name: Install dependencies
+        run: docker exec -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -w /workspace vigil-deb pnpm install --frozen-lockfile
+      - name: Root integration tests (Debian 12)
+        run: docker exec -w /workspace vigil-deb /bin/bash scripts/ci/container-integration-tests.sh

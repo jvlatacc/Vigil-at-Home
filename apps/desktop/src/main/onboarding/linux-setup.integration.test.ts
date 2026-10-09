@@ -7,8 +7,10 @@ import { CHECKS, systemProbe } from './checks.js';
 import { linuxDistro, setupPlan } from './plan.js';
 
 // Runs setup's own Linux commands, exactly as shown to the user, on a real
-// Debian-family machine as root. Runs in CI's linux job (Ubuntu, sudo,
-// VIGIL_LINUX_INTEGRATION=1).
+// Linux machine as root — whichever branch setup would show there: apt on the
+// Debian family, dnf on the RHEL family (Rocky/Alma report ID_LIKE rhel centos
+// fedora). Runs in CI's linux job (Ubuntu, sudo, VIGIL_LINUX_INTEGRATION=1)
+// and in the linux-dnf and linux-debian container jobs.
 const release = (() => {
   try {
     return readFileSync('/etc/os-release', 'utf8');
@@ -16,13 +18,14 @@ const release = (() => {
     return '';
   }
 })();
+const distro = linuxDistro(release);
 const enabled =
   process.platform === 'linux' &&
   process.env['VIGIL_LINUX_INTEGRATION'] === '1' &&
   process.getuid?.() === 0 &&
-  linuxDistro(release) === 'debian';
+  (distro === 'debian' || distro === 'fedora');
 
-const steps = setupPlan({ platform: 'linux', distro: 'debian', helperInstallCommand: 'x' });
+const steps = setupPlan({ platform: 'linux', distro, helperInstallCommand: 'x' });
 const run = (id: string) => {
   for (const c of steps.find((s) => s.id === id)!.commands) {
     const r = spawnSync('/bin/sh', ['-c', c.cmd], { encoding: 'utf8', timeout: 5 * 60_000 });
