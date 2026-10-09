@@ -740,6 +740,17 @@ describe('executor on Linux', () => {
     ).rejects.toMatchObject({ code: 'refused' });
   });
 
+  it("refuses to quarantine root's files", async () => {
+    // /root itself is exact-protected; its contents were not, so an
+    // unprivileged caller could send root's files to the store one by one.
+    await expect(
+      ex.execute({ kind: 'file.quarantine', path: '/root/.ssh/authorized_keys' }),
+    ).rejects.toMatchObject({ code: 'refused' });
+    await expect(
+      ex.execute({ kind: 'file.quarantine', path: '/root/.bashrc' }),
+    ).rejects.toMatchObject({ code: 'refused' });
+  });
+
   it('says Santa is macOS-only', async () => {
     await expect(
       ex.execute({

@@ -1035,10 +1035,13 @@ describe('one sync carrying big lists', () => {
     expect(JSON.stringify({ ...sync, entries: lists }).length).toBeGreaterThan(1024 * 1024);
     expect(await syncWith(sync, lists)).toMatchObject({ applied: true });
     expect(fast.status().lists['known_bad_sha256']).toBe(new Set(big).size);
-    // Any other command that long is cut off.
+    // Any other command that long is refused, cleanly, and its connection closed.
     const other = await HelperClient.connect(join(root, 'helper.sock'), async () => false);
     const huge = { kind: 'helper.journal', limit: 1, pad: 'x'.repeat(2 * 1024 * 1024) };
-    await expect(other.call(huge as never)).rejects.toMatchObject({ code: 'failed' });
+    await expect(other.call(huge as never)).rejects.toMatchObject({
+      code: 'invalid',
+      message: 'request too long',
+    });
   });
 
   it('refuses a long line that starts as a sync but parses as another command', async () => {
