@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createServer as createSecureServer } from 'node:https';
 import { handleIngest, INGEST_PATH, sendJson } from './ingest.js';
 import { KeyedBuckets } from './ratelimit.js';
+import { Retainer } from './retention.js';
 import { RelayStore } from './store.js';
 import type { RelayConfig } from './config.js';
 
@@ -10,16 +11,25 @@ export interface RelayServer {
   port: number;
   store: RelayStore;
   buckets: KeyedBuckets;
+  retainer: Retainer;
   close(): Promise<void>;
 }
 
 /**
  * The relay's one listener: unauthenticated /healthz (data-free, for load
  * balancers) and the ingest route. The MCP face for the SOC mounts on this
- * listener too.
+ * listener too. Retention runs hourly and whenever the store crosses its
+ * insert threshold — both paths land on the same Retainer.
  */
 export function startRelay(config: RelayConfig, store?: RelayStore): Promise<RelayServer> {
-  const ownedStore = store ?? new RelayStore(config.dataDir);
+  const ownsStore = store === undefined;
+  // The store fires the insert-threshold hook; it is wired through a holder
+  // because the Retainer needs the store first.
+  const retentionHook: { current?: () => void } = {};
+  const ownedStore =
+    store ?? new RelayStore(config.dataDir, { onRetentionDue: () => retentionHook.current?.() });
+  const retainer = new Retainer(ownedStore, config);
+  retentionHook.current = () => retainer.run();
   // House numbers from the agent socket: a steady 30 requests/s with room
   // for bursts of 60 (the config's defaults), keyed per token so one noisy
   // laptop cannot starve another. Checked before any body is read.
@@ -66,17 +76,20 @@ export function startRelay(config: RelayConfig, store?: RelayStore): Promise<Rel
     server.listen(config.port, config.host, () => {
       const address = server.address();
       const port = address !== null && typeof address === 'object' ? address.port : config.port;
+      retainer.start();
       resolve({
         port,
         store: ownedStore,
         buckets,
+        retainer,
         close: () =>
           new Promise((done) => {
             // Drop idle keep-alive sockets (undici keeps them open) so a
             // graceful stop ends without waiting on clients.
             server.closeIdleConnections();
             server.close(() => {
-              ownedStore.close();
+              retainer.stop();
+              if (ownsStore) ownedStore.close();
               done();
             });
           }),

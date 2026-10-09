@@ -5,6 +5,13 @@ import { DeviceId, type ShipRecord } from './wire.js';
 import { newToken, tokenHash, type TokenKind } from './tokens.js';
 
 /**
+ * The streams retention evicts, oldest first. Rule snapshots are missing on
+ * purpose: they are current state, not history.
+ */
+const STREAM_TABLES = ['events', 'alerts', 'actions'] as const;
+type StreamTable = (typeof STREAM_TABLES)[number];
+
+/**
  * SQLite schema, applied in order and tracked with `PRAGMA user_version`,
  * like the app's store. Each stream row keeps the zod-validated record body
  * as JSON plus the columns we filter, sort or dedupe on. There are no
@@ -103,6 +110,13 @@ export interface RelayStats {
   usageBytes: number;
 }
 
+export interface RelayStoreOptions {
+  /** Called when total inserts cross each `insertCheckEvery` multiple. */
+  onRetentionDue?: () => void;
+  /** Inserts between retention callbacks; the house number is 10,000. */
+  insertCheckEvery?: number;
+}
+
 type TokenRow = {
   hash: string;
   kind: string;
@@ -121,6 +135,10 @@ type TokenRow = {
 export class RelayStore {
   private readonly dataDir: string;
   private readonly db: DatabaseSync;
+  private readonly onRetentionDue: (() => void) | undefined;
+  private readonly insertCheckEvery: number;
+  private totalInserts = 0;
+  private lastRetentionCheck = 0;
   private readonly findToken: StatementSync;
   private readonly insertDevice: StatementSync;
   private readonly insertToken: StatementSync;
@@ -134,20 +152,23 @@ export class RelayStore {
   private readonly devicePosition: StatementSync;
   private readonly touchDevice: StatementSync;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, opts: RelayStoreOptions = {}) {
+    this.onRetentionDue = opts.onRetentionDue;
+    this.insertCheckEvery = opts.insertCheckEvery ?? 10_000;
     // House pattern for private state (the agent socket's privateDir):
     // create it 0700 and make sure it stays that way.
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     chmodSync(dataDir, 0o700);
     this.dataDir = dataDir;
     this.db = new DatabaseSync(join(dataDir, 'relay.db'));
+    // auto_vacuum must be set before the database file becomes non-empty:
+    // after journal_mode = WAL writes the header, SQLite silently discards
+    // the setting (reads back NONE) and vacuum never returns pages.
+    this.db.exec('PRAGMA auto_vacuum = INCREMENTAL');
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA synchronous = NORMAL');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec('PRAGMA busy_timeout = 3000');
-    // Lets eviction return pages to the disk after the cap evicts rows; a
-    // no-op until the first VACUUM on databases that predate this pragma.
-    this.db.exec('PRAGMA auto_vacuum = INCREMENTAL');
     this.migrate();
     this.findToken = this.db.prepare('SELECT * FROM tokens WHERE hash = ?');
     this.insertDevice = this.db.prepare(
@@ -280,6 +301,16 @@ export class RelayStore {
       );
       this.touchDevice.run(now, cursor.ts, cursor.id, deviceId);
       this.db.exec('COMMIT');
+      // Retention re-checks at insert thresholds as well as hourly, so a
+      // busy relay cannot outgrow its disk cap between clock ticks.
+      this.totalInserts += accepted;
+      if (
+        this.onRetentionDue !== undefined &&
+        this.totalInserts - this.lastRetentionCheck >= this.insertCheckEvery
+      ) {
+        this.lastRetentionCheck = this.totalInserts;
+        this.onRetentionDue();
+      }
       return { accepted, duplicates, cursor };
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -311,6 +342,46 @@ export class RelayStore {
     return row.journal_mode;
   }
 
+  /**
+   * Deletes stream rows at or before `cutoffMs`, oldest first, until the
+   * streams hold nothing that old. Rule snapshots are current state, not
+   * history — they stay.
+   */
+  evictOlderThan(cutoffMs: number, maxRowsPerPass: number): number {
+    let deleted = 0;
+    for (;;) {
+      const pass = STREAM_TABLES.reduce(
+        (n, table) => n + this.deleteBatchFrom(table, cutoffMs, maxRowsPerPass),
+        0,
+      );
+      deleted += pass;
+      if (pass === 0) break;
+    }
+    this.db.exec('PRAGMA incremental_vacuum(2048)');
+    return deleted;
+  }
+
+  /**
+   * Deletes oldest-first across all streams until usage is at or under
+   * `maxBytes`, bounded by `maxPasses` so a pathological row can't loop
+   * forever. Returns the rows deleted.
+   */
+  evictToBytes(maxBytes: number, maxRowsPerPass: number, maxPasses: number): number {
+    let deleted = 0;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      // Freed pages only leave page_count after a vacuum, so vacuum between
+      // passes — otherwise the loop cannot see its own progress and evicts
+      // everything before stopping.
+      if (this.diskUsageBytes() <= maxBytes) break;
+      const n = this.deleteOldestAcrossStreams(maxRowsPerPass);
+      if (n === 0) break;
+      deleted += n;
+      this.db.exec('PRAGMA incremental_vacuum(2048)');
+    }
+    this.db.exec('PRAGMA incremental_vacuum(2048)');
+    return deleted;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -318,6 +389,46 @@ export class RelayStore {
   private count(table: string): number {
     const row = this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
     return Number(row.n);
+  }
+
+  /**
+   * Deletes at most `maxRows` rows of one stream — the oldest first, and
+   * only those at or before `cutoffMs` when given. `table` comes from the
+   * module's own constant, never from input.
+   */
+  private deleteBatchFrom(
+    table: StreamTable,
+    cutoffMs: number | undefined,
+    maxRows: number,
+  ): number {
+    const sql =
+      cutoffMs === undefined
+        ? `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} ORDER BY ts, id LIMIT ?)`
+        : `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ts <= ? ORDER BY ts, id LIMIT ?)`;
+    const result =
+      cutoffMs === undefined
+        ? this.db.prepare(sql).run(maxRows)
+        : this.db.prepare(sql).run(cutoffMs, maxRows);
+    return Number(result.changes);
+  }
+
+  /** One batch from whichever stream holds the globally oldest row. */
+  private deleteOldestAcrossStreams(maxRows: number): number {
+    let oldest: { table: StreamTable; ts: number; id: string } | undefined;
+    for (const table of STREAM_TABLES) {
+      const row = this.db.prepare(`SELECT ts, id FROM ${table} ORDER BY ts, id LIMIT 1`).get() as
+        { ts: number; id: string } | undefined;
+      if (row === undefined) continue;
+      if (
+        oldest === undefined ||
+        row.ts < oldest.ts ||
+        (row.ts === oldest.ts && row.id < oldest.id)
+      ) {
+        oldest = { table, ts: row.ts, id: row.id };
+      }
+    }
+    if (oldest === undefined) return 0;
+    return this.deleteBatchFrom(oldest.table, undefined, maxRows);
   }
 
   private migrate(): void {
