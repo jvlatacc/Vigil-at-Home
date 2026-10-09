@@ -42,6 +42,7 @@ It copies the helper and its own Node.js runtime into `/Library/PrivilegedHelper
 From [Releases](https://github.com/ShmalexM/Vigil-at-Home/releases):
 
 - **Debian, Ubuntu and their relatives**: `sudo apt install ./Vigil-at-Home-<version>-amd64.deb`, then open Vigil at Home from your apps.
+- **Arch and Omarchy**: run the AppImage as below, and see [docs/arch-omarchy.md](docs/arch-omarchy.md) first — osquery comes from the official `extra` repository and fapolicyd only from the AUR.
 - **Other distributions**: download `Vigil-at-Home-<version>-x86_64.AppImage`, make it executable (`chmod +x`) and run it.
 
 Setup in the app installs osquery, fapolicyd and the Vigil helper (a root systemd service), asking for your password through your desktop's own dialog. Programs your package manager installed stay trusted. On GNOME, Scout shows in the top bar once the AppIndicator extension is on (Ubuntu has it on already). Linux builds are for 64-bit Intel and AMD computers for now. They're tested on Ubuntu; a full Wayland desktop hasn't been tried yet.
