@@ -66,9 +66,10 @@ function escapeRegExp(text: string): string {
  * The redactor's word-boundary pass keeps the machine's own names intact
  * inside hyphenated compounds (`agent-<user>.plist`); the exporter knows
  * those names exactly — it derives the machine id from one of them — so it
- * scrubs them verbatim after the redactor has run.
+ * scrubs them verbatim after the redactor has run. Exported because the MCP
+ * pull surface scrubs its serialized answers the same way.
  */
-function scrubLocalNamesText(text: string, names: RedactionNames): string {
+export function scrubLocalNamesText(text: string, names: RedactionNames): string {
   let scrubbed = text;
   if (names.username) {
     scrubbed = scrubbed.replace(new RegExp(escapeRegExp(names.username), 'gi'), '<user>');

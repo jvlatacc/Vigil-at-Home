@@ -741,10 +741,12 @@ describe('Store: who writes events', () => {
     // App and package code; measurement scripts (perf/) build their own tables.
     for (const top of ['apps', 'packages'])
       for (const d of readdirSync(join(root, top))) walk(join(root, top, d, 'src'));
-    // Migrations run before a Store exists.
+    // Migrations run before a Store exists. The soc-export MCP test fixture
+    // builds its own throwaway tables — never the real database's.
     expect(found.sort()).toEqual([
       'apps/desktop/src/main/db/schema.ts',
       'apps/desktop/src/main/db/store.ts',
+      'packages/soc-export/src/__tests__/mcp-fixture-db.ts',
     ]);
   });
 });
