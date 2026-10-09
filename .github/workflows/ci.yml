@@ -82,10 +82,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang llvm gcc make cmake libbpf-dev \
-            linux-tools-common linux-tools-generic \
+            linux-tools-common linux-tools-azure \
             zstd xz-utils bzip2 gzip
-          # on Ubuntu bpftool is a virtual package (linux-tools-*); confirm
-          # the wrapper resolves before the build needs it
+          # on Ubuntu bpftool is a virtual package and the linux-tools
+          # wrapper requires an exact kernel match; the azure metapackage
+          # tracks the ubuntu-latest runner kernel. Verify resolution.
           bpftool version
       - name: Host unit tests (ctest)
         run: make -C kernel-monitor test
