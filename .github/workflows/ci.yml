@@ -82,11 +82,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang llvm gcc make cmake libbpf-dev \
-            linux-tools-common linux-tools-azure \
+            linux-tools-common linux-tools-generic \
             zstd xz-utils bzip2 gzip
-          # on Ubuntu bpftool is a virtual package and the linux-tools
-          # wrapper requires an exact kernel match; the azure metapackage
-          # tracks the ubuntu-latest runner kernel. Verify resolution.
+          # Ubuntu ships bpftool as per-kernel versioned binaries under
+          # /usr/lib/linux-tools*, and the /usr/sbin/bpftool wrapper demands
+          # an exact running-kernel match that runner images cannot satisfy
+          # (they boot kernels newer than the tools archive tracks). Every
+          # use in this job is host-side (skeleton generation, BTF dump), so
+          # link the newest installed binary directly, ahead of the wrapper.
+          BPFTOOL_BIN=$(find /usr/lib/linux-tools* -name bpftool -type f | sort -V | tail -1)
+          if [ -z "$BPFTOOL_BIN" ]; then
+            echo "no bpftool binary installed by linux-tools-generic" >&2
+            exit 1
+          fi
+          echo "using $BPFTOOL_BIN"
+          sudo ln -sf "$BPFTOOL_BIN" /usr/local/bin/bpftool
           bpftool version
       - name: Host unit tests (ctest)
         run: make -C kernel-monitor test
