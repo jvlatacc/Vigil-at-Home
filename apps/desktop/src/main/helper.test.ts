@@ -31,6 +31,16 @@ function fakeClient(answer: (cmd: { kind: string }) => unknown) {
   };
 }
 
+/** The detection.list.set messages the fake saw, with their shapes. */
+function listParts(sent: { kind: string }[]) {
+  return sent.filter((c) => c.kind === 'detection.list.set') as unknown as {
+    kind: string;
+    list: string;
+    part: number;
+    parts: number;
+    entries: string[];
+  }[];
+}
 const socket = () => {
   const p = join(mkdtempSync(join(tmpdir(), 'vh-')), 'helper.sock');
   writeFileSync(p, '');
@@ -185,7 +195,7 @@ describe('HelperLink', () => {
     link.stop();
   });
 
-  it('sends rules and their lists as one sync, then list-only changes on their own', async () => {
+  it('puts lists on in parts before the sync, and list-only changes on their own', async () => {
     const fake = fakeClient((cmd) =>
       cmd.kind === 'detection.sync'
         ? { applied: true, needLists: [], preexec: 'pending' }
@@ -203,28 +213,32 @@ describe('HelperLink', () => {
     };
     const out = await link.syncRules(set, { syncId: 'abc' });
     expect(out).toMatchObject({ applied: true });
-    // One command: the rules and every list's contents, so they go in together.
+    // The lists go on first, in parts; the sync carries rules alone, so no
+    // single line ever has to hold a whole feed.
     const syncs = fake.sent.filter((c) => c.kind === 'detection.sync') as unknown as {
+      kind: string;
       syncId: string;
-      entries: Record<string, string[]>;
+      entries?: Record<string, string[]>;
     }[];
     expect(syncs).toHaveLength(1);
     expect(syncs[0]!.syncId).toBe('abc');
+    expect(syncs[0]).not.toHaveProperty('entries');
     // Vigil's own programs go in a self grant of their own.
     expect(syncs[0]).not.toHaveProperty('selfPaths');
-    expect(Object.keys(syncs[0]!.entries).sort()).toEqual(['big', 'small']);
-    expect(syncs[0]!.entries['big']).toHaveLength(2500);
-    expect(fake.sent.filter((c) => c.kind === 'detection.list.set')).toEqual([]);
+    const parts = listParts(fake.sent);
+    expect(parts.map((p) => [p.list, p.part, p.parts, p.entries.length])).toEqual([
+      ['big', 0, 3, 1000],
+      ['big', 1, 3, 1000],
+      ['big', 2, 3, 500],
+      ['small', 0, 1, 1],
+    ]);
+    expect(fake.sent.indexOf(parts[0]!)).toBeLessThan(fake.sent.indexOf(syncs[0]!));
 
     // Only a list changed (a feed refresh): it goes on its own, in parts.
+    const sentBefore = fake.sent.length;
     await link.syncRules({ ...set, lists: { big: [...big, 'h-new'], small: ['a'] } });
-    const parts = fake.sent.filter((c) => c.kind === 'detection.list.set') as unknown as {
-      list: string;
-      part: number;
-      parts: number;
-      entries: string[];
-    }[];
-    expect(parts.map((p) => [p.list, p.part, p.parts, p.entries.length])).toEqual([
+    const more = listParts(fake.sent.slice(sentBefore));
+    expect(more.map((p) => [p.list, p.part, p.parts, p.entries.length])).toEqual([
       ['big', 0, 3, 1000],
       ['big', 1, 3, 1000],
       ['big', 2, 3, 501],
@@ -255,17 +269,18 @@ describe('HelperLink', () => {
     link.stop();
   });
 
-  it('sends the sync again with the lists the helper says it lacks', async () => {
+  it('puts the lists the helper says it lacks on, and syncs again', async () => {
     let first = true;
     const fake = fakeClient((cmd) => {
-      if (cmd.kind !== 'detection.sync') return { complete: true };
-      const carried = Object.keys((cmd as { entries?: object }).entries ?? {});
+      if (cmd.kind === 'detection.list.set') {
+        expect(cmd).toMatchObject({ list: 'small', part: 0, parts: 1, entries: ['a'] });
+        return { complete: true };
+      }
       if (first) {
         first = false;
         // The helper says it still lacks a list and changes nothing.
         return { applied: false, needLists: ['small'], preexec: null };
       }
-      expect(carried).toContain('small');
       return { applied: true, needLists: [], preexec: null };
     });
     const link = new HelperLink(socket(), async () => fake.client);
@@ -279,6 +294,8 @@ describe('HelperLink', () => {
     });
     expect(out).toMatchObject({ applied: true });
     expect(fake.sent.filter((c) => c.kind === 'detection.sync')).toHaveLength(2);
+    // The part goes on before the first sync and again after the helper asks.
+    expect(fake.sent.filter((c) => c.kind === 'detection.list.set')).toHaveLength(2);
     link.stop();
   });
 
