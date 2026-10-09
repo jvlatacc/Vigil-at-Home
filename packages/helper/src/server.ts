@@ -132,14 +132,11 @@ export class HelperServer {
     let closing = false;
     let closeWhenIdle: (() => void) | undefined;
     this.connections.add(sock);
-    const idle = setTimeout(
-      () => {
-        if (this.subscribers.has(sock)) return;
-        this.opts.log?.('idle connection cut off');
-        sock.destroy();
-      },
-      this.limits.idleTimeoutMs,
-    );
+    const idle = setTimeout(() => {
+      if (this.subscribers.has(sock)) return;
+      this.opts.log?.('idle connection cut off');
+      sock.destroy();
+    }, this.limits.idleTimeoutMs);
     // Counts one request; false when the connection's budget is spent.
     const charge = (): boolean => {
       const now = Date.now();
@@ -217,17 +214,14 @@ export class HelperServer {
    * checked again once the line parses (onLine).
    */
   private lineOverLimit(line: string): boolean {
-    const max = SYNC_PREFIX.test(line.slice(0, 400)) ? this.limits.maxSyncLine : this.limits.maxLine;
+    const max = SYNC_PREFIX.test(line.slice(0, 400))
+      ? this.limits.maxSyncLine
+      : this.limits.maxLine;
     return line.length > max;
   }
 
   /** Answer a bad line — a real client learns why; a hostile one gains one short response. */
-  private refuse(
-    sock: Socket,
-    line: string,
-    error: string,
-    code: ErrorCode = 'invalid',
-  ): void {
+  private refuse(sock: Socket, line: string, error: string, code: ErrorCode = 'invalid'): void {
     const id = ID_PREFIX.exec(line.slice(0, 400))?.[1] ?? '';
     this.send(sock, { id, ok: false, error, code });
   }

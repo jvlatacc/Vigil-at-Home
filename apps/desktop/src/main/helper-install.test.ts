@@ -45,7 +45,12 @@ function bundle() {
   for (const f of ['install.sh', 'uninstall.sh']) writeFileSync(join(dir, 'linux', f), `# ${f}`);
   for (const f of ['helper.mjs', 'vigil-helper', 'com.vigilathome.helper.plist'])
     writeFileSync(join(dir, f), f);
-  for (const f of ['vigil-helper', 'vigil-helper-launcher', 'vigil-helper.service', 'com.vigilathome.helper.policy'])
+  for (const f of [
+    'vigil-helper',
+    'vigil-helper-launcher',
+    'vigil-helper.service',
+    'com.vigilathome.helper.policy',
+  ])
     writeFileSync(join(dir, 'linux', f), f);
   return { res, dir };
 }

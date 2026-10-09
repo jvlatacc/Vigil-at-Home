@@ -367,7 +367,9 @@ export const HELPER_LAUNCHER = '/usr/libexec/vigil-helper-launcher';
  * files) - see rootStageScript.
  */
 export function installArgv(launcher: string | undefined, digested: readonly string[]): string[] {
-  return launcher ? [launcher, ...digested] : [...ROOT_SHELL, rootStageScript('linux'), ...digested];
+  return launcher
+    ? [launcher, ...digested]
+    : [...ROOT_SHELL, rootStageScript('linux'), ...digested];
 }
 
 /** The arguments after `sh -c <rootStageScript>` that run `kind` from `from`. */
