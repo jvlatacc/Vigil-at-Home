@@ -31,7 +31,7 @@ import {
   syncTlsPaths,
 } from '@vigil/sensors';
 import { Approvals } from './approval.js';
-import { pinCandidate, repinFromGrant } from './appPin.js';
+import { pinCandidate, repinFromGrant, runsPinnedApp } from './appPin.js';
 import { AppPinStore } from './pinStore.js';
 import {
   defaultPaths,
@@ -57,6 +57,8 @@ import { signatureLookup } from './signature.js';
 import { linuxPackageIndex } from './packageTrust.js';
 import { ensureLinuxOsquery, type LinuxOsqueryPaths } from './linuxOsquery.js';
 import { FapolicydBlocks } from './commands/fapolicyd.js';
+import { identifyProcess } from './commands/process.js';
+import { createPeerGuard, type PeerGuard } from './peer.js';
 import type { HelperRan } from './fastpath.js';
 import { BINARIES, LINUX_BINARIES, realSystem, type System } from './system.js';
 
@@ -82,6 +84,8 @@ export interface DaemonOptions {
   ownProgramRoots?: string[];
   /** How long to wait before trying the sync port again when it is taken. */
   syncRetryMs?: number;
+  /** Peer verification for the command socket (peer.ts); tests stub it. Built from the pin store and the self set when absent. */
+  peer?: PeerGuard;
 }
 
 /** What helper.status reports about each sensor. The app decides what counts as stale. */
@@ -252,6 +256,19 @@ export async function runDaemon(opts: DaemonOptions = {}): Promise<() => Promise
     executor,
     ownerUid: sys.consoleUid(),
     log,
+    // Who may run state-changing commands over the socket (peer.ts): the
+    // pinned app, an installer-folder program, or an approved self image.
+    peer:
+      opts.peer ??
+      createPeerGuard({
+        sys,
+        installed: installedSelf(sys.platform),
+        isPinnedApp: (id) =>
+          runsPinnedApp(sys, pinStore.current(), id, () => identifyProcess(sys, id.pid)),
+        selfImages: () => fastPath.self().images,
+        journal,
+        log,
+      }),
   });
   await server.listen();
 

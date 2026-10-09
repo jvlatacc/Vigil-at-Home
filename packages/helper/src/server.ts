@@ -5,15 +5,19 @@
 // The socket file is owned by the logged-in user with mode 0600, so other
 // accounts cannot talk to the helper. Anything running as that user can,
 // which is why releasing actions need the admin password — and why the
-// limits below bound what any single connection can make the root process
-// parse or hold: line sizes are capped, requests are budgeted per
-// connection, and idle connections are cut.
+// peer guard (peer.ts), when wired, refuses state-changing commands from
+// same-user processes the helper does not serve, while read-only queries
+// stay open to every same-user peer — and why the limits below bound what
+// any single connection can make the root process parse or hold: line
+// sizes are capped, requests are budgeted per connection, and idle
+// connections are cut.
 
 import { createServer, type Server, type Socket } from 'node:net';
 import { chmodSync, chownSync, rmSync } from 'node:fs';
 import type { SensorEvent } from '@vigil/sensors';
 import { parseRequest, type ErrorCode, type HelperResponse } from './protocol.js';
 import type { Executor } from './executor.js';
+import type { PeerGuard } from './peer.js';
 import type { HelperRan } from './fastpath.js';
 import { ActionError } from './commands/errors.js';
 
@@ -64,6 +68,11 @@ export interface HelperServerOptions {
   log?: ((msg: string) => void) | undefined;
   /** Overrides for the per-connection limits above. */
   limits?: Partial<ServerLimits>;
+  /**
+   * Peer identity gate (peer.ts): what the connecting process may run.
+   * Direct constructions without one (tests, socketProbe) skip the check.
+   */
+  peer?: PeerGuard | undefined;
 }
 
 export class HelperServer {
@@ -251,6 +260,17 @@ export class HelperServer {
     if (line.length > this.limits.maxLine && req.command.kind !== 'detection.sync') {
       this.send(sock, { id: req.id, ok: false, error: 'request too long', code: 'invalid' });
       return;
+    }
+    // Who is asking? The peer gate answers what this connection may run
+    // (peer.ts): read-only queries for any same-user peer, state-changing
+    // commands only for the app the helper serves. Absent guard (tests,
+    // socketProbe): no check, as before this gate existed.
+    if (this.opts.peer) {
+      const verdict = await this.opts.peer.check(sock, req.command);
+      if (!verdict.allow) {
+        this.send(sock, { id: req.id, ok: false, error: verdict.detail, code: verdict.code });
+        return;
+      }
     }
     if (req.command.kind === 'events.subscribe') {
       const since = req.command.since;
