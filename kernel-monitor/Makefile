@@ -21,7 +21,7 @@ LIBS := -lbpf -lelf -lz
 
 DAEMON_SRCS := $(SRC_DIR)/daemon.c $(SRC_DIR)/event.c $(SRC_DIR)/index.c \
 	       $(SRC_DIR)/pipeline.c $(SRC_DIR)/syslog_emit.c $(SRC_DIR)/util.c \
-	       $(SRC_DIR)/feature_probe.c $(SRC_DIR)/health.c
+	       $(SRC_DIR)/feature_probe.c $(SRC_DIR)/health.c $(SRC_DIR)/attach.c
 DAEMON_OBJS := $(patsubst $(SRC_DIR)/%.c,$(BUILD)/%.o,$(DAEMON_SRCS))
 
 TARGET := $(BUILD)/vigil-kernel-monitor
@@ -40,7 +40,9 @@ $(BUILD)/%.o: $(SRC_DIR)/%.c $(SKEL) $(VMLINUX) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(SRC_DIR) -c $< -o $@
 
 # The BPF object needs vmlinux.h; the skeleton comes back from its BTF.
-$(BPF_OBJ): $(BPF_DIR)/vigil.bpf.c $(VMLINUX) | $(BUILD)
+# payload.h is the byte contract shared with src/index.c — keep the
+# dependency so contract edits rebuild the object.
+$(BPF_OBJ): $(BPF_DIR)/vigil.bpf.c $(SRC_DIR)/payload.h $(VMLINUX) | $(BUILD)
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
 $(SKEL): $(BPF_OBJ)

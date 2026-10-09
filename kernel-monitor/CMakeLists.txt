@@ -8,6 +8,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_library(vigil_core STATIC
+	src/attach.c
 	src/event.c
 	src/index.c
 	src/pipeline.c
@@ -18,7 +19,7 @@ target_compile_options(vigil_core PRIVATE -Wall -Wextra)
 
 enable_testing()
 
-foreach(t pipeline syslog index event replay)
+foreach(t pipeline syslog index event attach replay)
 	add_executable(${t}_test tests/${t}_test.c)
 	target_link_libraries(${t}_test PRIVATE vigil_core)
 	target_compile_definitions(${t}_test PRIVATE
