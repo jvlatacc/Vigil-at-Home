@@ -71,6 +71,9 @@ importers:
       '@vigil/sensors':
         specifier: workspace:*
         version: link:../../packages/sensors
+      '@vigil/soc-export':
+        specifier: workspace:*
+        version: link:../../packages/soc-export
       '@vitejs/plugin-react':
         specifier: ^6.1.1
         version: 6.1.1(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0))

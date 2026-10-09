@@ -146,7 +146,8 @@ export class FeedKeyStore {
   }
 }
 
-function readPrivate<T>(path: string, schema: z.ZodType<T>): T {
+/** Read once and schema-checked; a corrupt file reads as no keys at all. Shared by every key file (AI, feeds, SOC export). */
+export function readPrivate<T>(path: string, schema: z.ZodType<T>): T {
   if (!existsSync(path)) return {} as T;
   try {
     return schema.parse(JSON.parse(readFileSync(path, 'utf8')));
@@ -156,7 +157,7 @@ function readPrivate<T>(path: string, schema: z.ZodType<T>): T {
 }
 
 /** Written whole and renamed into place, readable only by the user. */
-function writePrivate(path: string, data: unknown): void {
+export function writePrivate(path: string, data: unknown): void {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
   chmodSync(tmp, 0o600);
