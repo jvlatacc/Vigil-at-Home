@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { app, dialog, Notification, powerMonitor, safeStorage, shell } from 'electron';
 import { z } from 'zod';
 import type { HelperInstallResult } from '../shared/ipc.js';
 import { AgentService } from './agents/service.js';
 import { AiBridge } from './ai.js';
+import { openPrivateDatabase } from './db/private-db.js';
 import { Store } from './db/store.js';
 import { demoInstalled, seedAgentsDemo, seedDemo, startDemoFeed } from './demo.js';
 import { seedUsageDemo } from './usage-demo.js';
@@ -96,8 +96,7 @@ function start(): void {
   restrictWebContents();
 
   const dataDir = app.getPath('userData');
-  mkdirSync(dataDir, { recursive: true });
-  const db = new DatabaseSync(join(dataDir, 'vigil.db'));
+  const db = openPrivateDatabase(dataDir);
   const store = new Store(db);
 
   // Actions go to the privileged helper. Until it is installed and answering,
