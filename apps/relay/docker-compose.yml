@@ -1,0 +1,32 @@
+# Example deployment: relay with a durable data volume behind plain HTTP.
+# Terminate TLS on your own proxy (or set RELAY_TLS_CERT/RELAY_TLS_KEY below
+# to have the relay speak TLS itself).
+#
+#   docker compose -f apps/relay/docker-compose.yml up -d --build
+#
+# Provision on the running container (tokens print once):
+#   docker compose -f apps/relay/docker-compose.yml exec relay /app/relay.mjs provision --device laptop-1
+#   docker compose -f apps/relay/docker-compose.yml exec relay /app/relay.mjs provision --soc soc-1
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: apps/relay/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Port inside the container; publish it as you like below.
+      RELAY_PORT: '8443'
+      RELAY_DATA_DIR: /data
+      # Retention defaults: 30 days and a 10 GiB disk cap, oldest evicted first.
+      RELAY_RETENTION_DAYS: '30'
+      RELAY_MAX_DISK_MB: '10240'
+      # Optional: relay-terminated TLS instead of a proxy in front.
+      # RELAY_TLS_CERT: /certs/relay.crt
+      # RELAY_TLS_KEY: /certs/relay.key
+    volumes:
+      - relay-data:/data
+      # - ./certs:/certs:ro
+    ports:
+      - '8443:8443'
+volumes:
+  relay-data:

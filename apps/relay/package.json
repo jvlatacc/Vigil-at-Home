@@ -13,5 +13,8 @@
   "dependencies": {
     "@vigil/core": "workspace:*",
     "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
