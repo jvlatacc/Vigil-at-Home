@@ -1,4 +1,14 @@
-export * from './wire.js';
+/** The wire contract, from @vigil/core — this package deploys it, it does not redefine it. */
+export {
+  AlertBody,
+  Cursor,
+  EventBody,
+  IngestAck,
+  IngestRequest,
+  MAX_BATCH_RECORDS,
+  ShipRecord,
+} from '@vigil/core';
+export { DeviceId } from './store.js';
 export { newToken, tokenHash, type TokenKind } from './tokens.js';
 export { RELAY_DEFAULTS, resolveConfig, type RelayConfig } from './config.js';
 export { RelayStore, type BatchOutcome, type DevicePosition, type RelayStats } from './store.js';

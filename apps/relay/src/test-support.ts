@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { IngestRequest, type ShipRecord } from './wire.js';
+import { IngestRequest, type ShipRecord } from '@vigil/core';
 import { startRelay, type RelayConfig, type RelayServer } from './index.js';
 
 /** A relay config pointed at a fresh private temp directory. */
@@ -105,7 +105,7 @@ export function alertRecord(id: string, ts: number): unknown {
 
 /** A full ingest request body with the initial cursor. */
 export function batchRequest(records: unknown[], deviceId = 'laptop-1'): string {
-  return JSON.stringify({ v: 1, deviceId, cursor: { ts: 0, id: '' }, records });
+  return JSON.stringify({ v: 1, deviceId, cursor: { ts: 0, id: '0' }, records });
 }
 
 /** Parses a wire batch into validated records, the way the ingest handler does. */

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { IngestAck, IngestRequest } from './wire.js';
+import { IngestAck, IngestRequest } from '@vigil/core';
 import { alertRecord, batchRequest, eventRecord, execEventBody } from './test-support.js';
 
 const request = (records: unknown[], deviceId = 'laptop-1'): unknown => ({
   v: 1,
   deviceId,
-  cursor: { ts: 0, id: '' },
+  cursor: { ts: 0, id: '0' },
   records,
 });
 
@@ -37,7 +37,7 @@ describe('IngestRequest', () => {
   it('rejects a missing or wrong version', () => {
     const bad = {
       deviceId: 'laptop-1',
-      cursor: { ts: 0, id: '' },
+      cursor: { ts: 0, id: '0' },
       records: [eventRecord('e1', 1)],
     };
     expect(IngestRequest.safeParse(bad).success).toBe(false);

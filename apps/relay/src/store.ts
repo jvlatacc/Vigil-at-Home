@@ -1,8 +1,13 @@
 import { mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
-import { DeviceId, type ShipRecord } from './wire.js';
+import { z } from 'zod';
+import { type ShipRecord } from '@vigil/core';
 import { newToken, tokenHash, type TokenKind } from './tokens.js';
+
+/** The laptop that ships telemetry, as provisioned by `relay provision --device`. */
+export const DeviceId = z.string().min(8).max(64);
+export type DeviceId = z.infer<typeof DeviceId>;
 
 /**
  * The streams retention evicts, oldest first. Rule snapshots are missing on
@@ -87,7 +92,8 @@ const migrations: string[] = [
 export interface BatchOutcome {
   accepted: number;
   duplicates: number;
-  cursor: DevicePosition;
+  /** The stream position this batch confirms, or undefined when nothing does. */
+  cursor: DevicePosition | undefined;
 }
 
 export interface DevicePosition {
@@ -154,6 +160,7 @@ export class RelayStore {
   private readonly upsertRule: StatementSync;
   private readonly devicePosition: StatementSync;
   private readonly touchDevice: StatementSync;
+  private readonly touchDeviceSeen: StatementSync;
 
   constructor(dataDir: string, opts: RelayStoreOptions = {}) {
     this.onRetentionDue = opts.onRetentionDue;
@@ -206,6 +213,7 @@ export class RelayStore {
     this.touchDevice = this.db.prepare(
       'UPDATE devices SET last_seen_at = ?, last_ts = ?, last_id = ? WHERE id = ?',
     );
+    this.touchDeviceSeen = this.db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?');
   }
 
   /**
@@ -291,7 +299,7 @@ export class RelayStore {
               ? this.insertAlert.run(deviceId, record.id, record.ts, body)
               : record.r === 'action'
                 ? this.insertAction.run(deviceId, record.id, record.ts, body)
-                : this.upsertRule.run(deviceId, record.id, record.version, record.ts, body);
+                : this.upsertRule.run(deviceId, record.id, record.version, now, body);
         if (Number(applied.changes) > 0) {
           accepted += 1;
         } else {
@@ -302,7 +310,10 @@ export class RelayStore {
         records,
         this.devicePosition.get(deviceId) as { last_ts: number | null; last_id: string | null },
       );
-      this.touchDevice.run(now, cursor.ts, cursor.id, deviceId);
+      // A rule-only first batch confirms no stream position: the device was
+      // heard from, but its position stands.
+      if (cursor === undefined) this.touchDeviceSeen.run(now, deviceId);
+      else this.touchDevice.run(now, cursor.ts, cursor.id, deviceId);
       this.db.exec('COMMIT');
       // Retention re-checks at insert thresholds as well as hourly, so a
       // busy relay cannot outgrow its disk cap between clock ticks.
@@ -460,21 +471,23 @@ export class RelayStore {
 function devicePositionCursor(
   records: readonly ShipRecord[],
   stored: { last_ts: number | null; last_id: string | null } | undefined,
-): DevicePosition {
-  let cursor: DevicePosition = { ts: 0, id: '' };
-  const candidates: readonly DevicePosition[] = [
-    ...records.map((r) => ({ ts: r.ts, id: r.id })),
-    ...(stored?.last_ts !== null &&
+): DevicePosition | undefined {
+  // Rule records are state, not stream entries: the wire carries no ts for
+  // them, so they never move a device's stream position.
+  let cursor: DevicePosition | undefined;
+  const consider = (ts: number, id: string): void => {
+    if (cursor === undefined || ts > cursor.ts || (ts === cursor.ts && id > cursor.id)) {
+      cursor = { ts, id };
+    }
+  };
+  for (const record of records) if (record.r !== 'rule') consider(record.ts, record.id);
+  if (
+    stored?.last_ts !== null &&
     stored?.last_ts !== undefined &&
     stored?.last_id !== null &&
     stored?.last_id !== undefined
-      ? [{ ts: stored.last_ts, id: stored.last_id }]
-      : []),
-  ];
-  for (const candidate of candidates) {
-    if (candidate.ts > cursor.ts || (candidate.ts === cursor.ts && candidate.id > cursor.id)) {
-      cursor = candidate;
-    }
+  ) {
+    consider(stored.last_ts, stored.last_id);
   }
   return cursor;
 }

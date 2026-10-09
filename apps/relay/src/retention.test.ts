@@ -41,7 +41,7 @@ function ruleRecord(id: string, ts: number): unknown {
 
 /** A gzip body from the batch object itself (batchRequest returns a string). */
 function gzippedBatch(records: unknown[], deviceId = 'laptop-1'): Buffer {
-  return gzipped({ v: 1, deviceId, cursor: { ts: 0, id: '' }, records });
+  return gzipped({ v: 1, deviceId, cursor: { ts: 0, id: '0' }, records });
 }
 
 describe('store eviction', () => {

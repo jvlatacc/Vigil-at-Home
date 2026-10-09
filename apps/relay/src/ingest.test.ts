@@ -81,7 +81,7 @@ describe('POST /v1/ingest', () => {
     await startAuthed();
     const bad = JSON.stringify({
       deviceId: 'laptop-1',
-      cursor: { ts: 0, id: '' },
+      cursor: { ts: 0, id: '0' },
       records: [eventRecord('e1', 1)],
     });
     const reply = (await ingest(bad)) as {
@@ -107,7 +107,7 @@ describe('POST /v1/ingest', () => {
       gzipped({
         v: 1,
         deviceId: 'laptop-1',
-        cursor: { ts: 0, id: '' },
+        cursor: { ts: 0, id: '0' },
         records: [eventRecord('e1', 1)],
       }),
       { 'content-encoding': 'gzip' },

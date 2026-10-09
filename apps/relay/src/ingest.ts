@@ -3,7 +3,7 @@ import { gunzipSync } from 'node:zlib';
 import type { KeyedBuckets } from './ratelimit.js';
 import type { RelayStore } from './store.js';
 import { tokenHash } from './tokens.js';
-import { IngestRequest, type IngestAck } from './wire.js';
+import { IngestRequest, type IngestAck } from '@vigil/core';
 
 /** POST /v1/ingest is the only write face. */
 export const INGEST_PATH = '/v1/ingest';
@@ -123,7 +123,7 @@ export async function handleIngest(
     v: 1,
     accepted: outcome.accepted,
     duplicates: outcome.duplicates,
-    ackedCursor: outcome.cursor,
+    ackedCursor: outcome.cursor ?? parsed.data.cursor,
   };
   // A pure replay (nothing new stored) answers 202: the batch is accepted,
   // and the duplicates count tells the shipper it can move on.
