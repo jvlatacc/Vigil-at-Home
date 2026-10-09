@@ -75,31 +75,33 @@ export class SensorHub {
     if (opts.osqueryRunner)
       this.burst = new NetworkBurst({ run: opts.osqueryRunner, emit: (e) => this.emit(e) });
     const santa = opts.santaLogPath ?? DEFAULT_PATHS.santaLog;
-    if (santa)
-      this.addTailer('santa', santa, (line) => {
-        const e = santaLogLineToEvent(line);
-        if (e) this.emit(e);
-      });
+    if (santa) this.addTailer('santa', santa, (line) => this.onSantaLine(line));
     const osq = opts.osqueryResultsPath ?? OSQUERY_RESULTS_LOG;
-    if (osq)
-      this.addTailer('osquery', osq, (line) => {
-        // Parsed once for both the health check and the events.
-        const parsed = parseOsqueryLine(line);
-        if (parsed === undefined) return;
-        const health = osqueryResultHealth(parsed);
-        if (health) {
-          // Differential queries are silent when nothing changes; the health
-          // query's rows are what show osquery is still running.
-          this.activity.osquery = Date.now();
-          if (health.denylisted.length > 0)
-            opts.onError?.(
-              'osquery',
-              new Error(`osquery switched off ${health.denylisted.join(', ')}`),
-            );
-          return;
-        }
-        for (const e of osqueryResultToEvents(line, parsed)) this.emit(e);
-      });
+    if (osq) this.addTailer('osquery', osq, (line) => this.onOsqueryLine(line));
+  }
+
+  private onSantaLine(line: string): void {
+    const e = santaLogLineToEvent(line);
+    if (e) this.emit(e);
+  }
+
+  private onOsqueryLine(line: string): void {
+    // Parsed once for both the health check and the events.
+    const parsed = parseOsqueryLine(line);
+    if (parsed === undefined) return;
+    const health = osqueryResultHealth(parsed);
+    if (health) {
+      // Differential queries are silent when nothing changes; the health
+      // query's rows are what show osquery is still running.
+      this.activity.osquery = Date.now();
+      if (health.denylisted.length > 0)
+        this.opts.onError?.(
+          'osquery',
+          new Error(`osquery switched off ${health.denylisted.join(', ')}`),
+        );
+      return;
+    }
+    for (const e of osqueryResultToEvents(line, parsed)) this.emit(e);
   }
 
   private addTailer(name: string, path: string, onLine: (line: string) => void): void {
