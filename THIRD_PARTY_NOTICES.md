@@ -77,6 +77,10 @@ The DMG, the .deb and the AppImage bundle these, each under its own license:
 | [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)                            | Proprietary: © Anthropic PBC, use subject to Anthropic's legal agreements (https://code.claude.com/docs/en/legal-and-compliance). Not open source and not covered by Vigil's Apache License. |
 | Other npm packages bundled into the app (React, lucide-react, zod, the MCP SDK, ajv and their dependencies) | MIT, ISC or BSD-3-Clause; each one's name, version and full license text is in the app's `licenses` folder (`Contents/Resources/licenses` on a Mac, `resources/licenses` on Linux)           |
 
+The appliance collector (`apps/appliance/`) is built and shipped separately from the
+desktop app (see `docs/appliance.md` when it lands). Its image bundles
+[zod](https://github.com/colinhacks/zod), used under the MIT License.
+
 ## Installed separately, not shipped
 
 Vigil talks to these but does not bundle them. You install them yourself, under their own terms.

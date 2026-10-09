@@ -1,0 +1,14 @@
+{
+  "name": "@vigil/appliance",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NetFlow-to-S3 appliance collector: decodes NetFlow v5/v9/IPFIX and normalizes flow records for S3 upload",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  }
+}
