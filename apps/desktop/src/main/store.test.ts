@@ -738,9 +738,20 @@ describe('Store: who writes events', () => {
         }
       }
     };
+    // Audit every src/ tree of every member, including nested ones like
+    // apps/appliance/collector/src. Bounded depth; never enters node_modules.
+    const walkMember = (dir: string, depth: number): void => {
+      if (depth > 2) return;
+      for (const d of readdirSync(dir, { withFileTypes: true })) {
+        if (!d.isDirectory() || d.name === 'node_modules' || d.name.startsWith('.')) continue;
+        const path = join(dir, d.name);
+        if (d.name === 'src') walk(path);
+        else walkMember(path, depth + 1);
+      }
+    };
     // App and package code; measurement scripts (perf/) build their own tables.
     for (const top of ['apps', 'packages'])
-      for (const d of readdirSync(join(root, top))) walk(join(root, top, d, 'src'));
+      for (const d of readdirSync(join(root, top))) walkMember(join(root, top, d), 1);
     // Migrations run before a Store exists. The soc-export MCP test fixture
     // builds its own throwaway tables — never the real database's.
     expect(found.sort()).toEqual([

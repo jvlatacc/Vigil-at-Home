@@ -18,6 +18,29 @@ We aim to reply within a week, and we'll tell you when a fix is released. Once i
 
 Vigil at Home is in alpha. Only the latest release and `main` get security fixes.
 
+## Trusted local boundaries
+
+Two places trust every process running as your user. Both are deliberate; they
+are written down so the choice is visible rather than accidental.
+
+- **The agent socket** (`run/agent.sock` in the app's data folder) serves
+  Claude Code's pre-flight hook and, when you turn them on, Vigil's read-only
+  tools for your own agents: redacted alerts, events and agent sessions. The
+  folder it lives in is `0700` and the socket itself `0600`, both owned by your
+  user; Vigil also watches the socket for tampering, and tool calls are capped
+  per connection (120 a minute by default). Any process running as you can
+  still open it. That is accepted on purpose: such a process could read Vigil's
+  SQLite database directly anyway, so the socket grants nothing your user
+  account does not already reach. See [docs/agents.md](docs/agents.md).
+- **The app window's CSP allows inline styles** (`style-src 'unsafe-inline'`,
+  set in `apps/desktop/src/renderer/index.html`), because theming works by
+  writing style tokens straight onto the root element. Scripts stay locked to
+  `'self'`, and the window is sandboxed with context isolation, so even markup
+  the renderer shouldn't show cannot reach Node or Vigil's privileged IPC.
+  Converting to nonces or hashes would complicate dynamic theming for no
+  measurable risk reduction, so this is accepted rather than fixed. If
+  `script-src` ever needs to loosen, revisit this decision first.
+
 ## In scope
 
 - the privileged helper (`packages/helper`, installed under `/Library/PrivilegedHelperTools`), its socket and its command list

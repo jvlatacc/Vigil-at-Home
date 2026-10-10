@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { app, dialog, Notification, powerMonitor, safeStorage, shell } from 'electron';
 import { z } from 'zod';
 import type { HelperInstallResult } from '../shared/ipc.js';
 import { AgentService } from './agents/service.js';
 import { AiBridge } from './ai.js';
+import { openPrivateDatabase } from './db/private-db.js';
 import { Store } from './db/store.js';
 import { demoInstalled, seedAgentsDemo, seedDemo, startDemoFeed } from './demo.js';
 import { seedUsageDemo } from './usage-demo.js';
@@ -92,14 +92,19 @@ function failedToStart(err: unknown): void {
   app.exit(1);
 }
 
+/** A non-negative number from the environment, or the fallback when unset or malformed. */
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 function start(): void {
   // Menu-bar app: no Dock icon until the main window opens.
   app.dock?.hide();
   restrictWebContents();
 
   const dataDir = app.getPath('userData');
-  mkdirSync(dataDir, { recursive: true });
-  const db = new DatabaseSync(join(dataDir, 'vigil.db'));
+  const db = openPrivateDatabase(dataDir);
   const store = new Store(db);
 
   // Actions go to the privileged helper. Until it is installed and answering,
@@ -124,7 +129,14 @@ function start(): void {
     selfPaths: self.app,
     helperSelf: self.helper,
     // URLhaus and MalwareBazaar send the user's abuse.ch key once they add one.
-    feeds: { keys: (name) => feedKeys.get(name) },
+    // Brand-new feed entries wait out a confirm window before they can enforce
+    // anything (a tampered feed cannot steer containment on day zero), and
+    // unusually fast list growth is flagged. Both knobs stay overridable.
+    feeds: {
+      keys: (name) => feedKeys.get(name),
+      confirmWindowMs: envNumber('FEED_CONFIRM_WINDOW_MS', 86_400_000),
+      maxGrowthRatio: envNumber('GROWTH_ALERT_RATIO', 1),
+    },
     // What Vigil itself starts (its AI helpers) is tagged vigil-self, never a watched agent.
     selfPid: process.pid,
     // The tracker reports to the agent service, created just below.

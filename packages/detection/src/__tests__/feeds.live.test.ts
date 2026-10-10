@@ -14,6 +14,9 @@ describe.skipIf(!process.env.VIGIL_LIVE_FEEDS)('default threat feeds (live)', ()
       const stores = memoryStores();
       const importer = new FeedImporter([source], stores.lists, new MemoryFeedStateStore(), {
         keys: () => abuseChKey,
+        // This test proves transport and parsing, not the enforcement
+        // lifecycle (covered offline): skip the pending confirm window.
+        confirmWindowMs: 0,
       });
       const [r] = await importer.run({ force: true });
       console.log(`${source.id}: ${JSON.stringify(r)}`);

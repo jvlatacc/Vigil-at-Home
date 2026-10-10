@@ -26,6 +26,7 @@ import {
   helperScriptFiles,
   helperMatch,
   inInstallerFolder,
+  installArgv,
   installedHelperFiles,
   ROOT_SHELL,
   rootStageScript,
@@ -44,7 +45,12 @@ function bundle() {
   for (const f of ['install.sh', 'uninstall.sh']) writeFileSync(join(dir, 'linux', f), `# ${f}`);
   for (const f of ['helper.mjs', 'vigil-helper', 'com.vigilathome.helper.plist'])
     writeFileSync(join(dir, f), f);
-  for (const f of ['vigil-helper', 'vigil-helper.service', 'com.vigilathome.helper.policy'])
+  for (const f of [
+    'vigil-helper',
+    'vigil-helper-launcher',
+    'vigil-helper.service',
+    'com.vigilathome.helper.policy',
+  ])
     writeFileSync(join(dir, 'linux', f), f);
   return { res, dir };
 }
@@ -555,4 +561,22 @@ describe('the uninstallers', () => {
       expect(at(`${bin} pin-remove`)).toBeLessThan(at(`rm -f ${bin}\n`));
     },
   );
+});
+
+describe('the install argv', () => {
+  const digested = ['vigil-helper-setup', '/tmp/stage', 'install.sh', 'd', '', 'linux/install.sh'];
+
+  it('runs the root-owned launcher when one is installed, naming Vigil in the dialog', () => {
+    expect(installArgv('/usr/libexec/vigil-helper-launcher', digested)).toEqual([
+      '/usr/libexec/vigil-helper-launcher',
+      ...digested,
+    ]);
+  });
+
+  it('falls back to the staged script under a bare shell for the first install', () => {
+    const argv = installArgv(undefined, digested);
+    expect(argv.slice(0, ROOT_SHELL.length)).toEqual([...ROOT_SHELL]);
+    expect(argv[ROOT_SHELL.length]).toBe(rootStageScript('linux'));
+    expect(argv.slice(ROOT_SHELL.length + 1)).toEqual(digested);
+  });
 });

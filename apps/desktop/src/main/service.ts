@@ -449,10 +449,10 @@ export class VigilCore {
 
   /**
    * The alert as JSON for a bug report, a note or another tool. A command
-   * line that might hold a secret is withheld whole; other text goes through
-   * the same redaction as data sent to a model (home folders, keys, tokens,
-   * emails); and this computer's user and host names are hidden at any
-   * length (evidence-redact.ts).
+   * line that might hold a secret is withheld whole; unlike data sent to a
+   * model, no secret span is ever cut out of copied text. Other text has
+   * its emails, home folders, and this computer's user and host names
+   * hidden (evidence-redact.ts).
    * It exports only the fields evidence-export.ts picks, so neither an event's
    * raw sensor record nor an internal key such as a repeat's goes out.
    */

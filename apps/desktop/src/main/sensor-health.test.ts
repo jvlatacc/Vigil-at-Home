@@ -264,4 +264,20 @@ describe('feedHealth', () => {
       ])?.note,
     ).toMatch(/^Stale: A, B kept their last list/);
   });
+
+  it('flags unusually fast list growth on the same quiet line', () => {
+    const registry = new SensorRegistry();
+    reportFeedHealth(registry, [{ name: 'Feodo Tracker', growthAlert: true }]);
+    const line = registry.get('threat-feeds');
+    expect(line).toMatchObject({ state: 'ok' });
+    expect(line?.note).toMatch(/^Unusual growth: Feodo Tracker listed many new entries/);
+
+    // Both conditions share the one line, each naming its feeds.
+    expect(
+      feedHealth([
+        { name: 'A', heldBack: true },
+        { name: 'B', growthAlert: true },
+      ])?.note,
+    ).toMatch(/^Stale: A kept its last list; the new one looked broken\. Unusual growth: B/);
+  });
 });

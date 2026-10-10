@@ -8,6 +8,14 @@ export interface FeedState {
   sourceId: string;
   /** Entry → last time the feed listed it (ms). */
   entries: Record<string, number>;
+  /**
+   * Entry → when this source first listed it (ms). A brand-new entry waits
+   * here for the confirm window before it joins `entries` and can enforce
+   * anything, so a tampered feed cannot steer containment the moment it is
+   * compromised. The sweep promotes these; a feed that stops listing an entry
+   * before its window passed retracts it.
+   */
+  pending?: Record<string, number>;
   etag?: string;
   lastModified?: string;
   /** Last successful fetch (including "not modified"). */
@@ -22,6 +30,12 @@ export interface FeedState {
    * accepted update (or "not modified").
    */
   heldBack?: boolean;
+  /**
+   * The last promotion more than doubled this source's active set — the shape
+   * of a tampered feed cashing in held entries. Cleared by the next accepted
+   * update (or "not modified"), like `heldBack`.
+   */
+  growthAlert?: boolean;
 }
 
 export interface FeedStateStore {
@@ -34,10 +48,23 @@ export class MemoryFeedStateStore implements FeedStateStore {
   private readonly states = new Map<string, FeedState>();
   get(sourceId: string): FeedState | undefined {
     const s = this.states.get(sourceId);
-    return s && { ...s, entries: { ...s.entries } };
+    if (!s) return undefined;
+    const { pending, ...rest } = s;
+    return {
+      ...rest,
+      entries: { ...s.entries },
+      // The nested maps are copies, like `entries`: callers may hold a state
+      // and mutate it without reaching into the store.
+      ...(pending && { pending: { ...pending } }),
+    };
   }
   put(state: FeedState): void {
-    this.states.set(state.sourceId, { ...state, entries: { ...state.entries } });
+    const { pending, ...rest } = state;
+    this.states.set(state.sourceId, {
+      ...rest,
+      entries: { ...state.entries },
+      ...(pending && { pending: { ...pending } }),
+    });
   }
   all(): FeedState[] {
     return [...this.states.values()];
@@ -68,6 +95,18 @@ export interface FeedImporterOptions extends CleanOptions {
    * list size. An update that would empty a stored list is always refused.
    */
   minShrinkRatio?: number;
+  /**
+   * How long a brand-new entry waits before it can enforce anything, counted
+   * from the first time a feed listed it (FEED-01). The default is a day;
+   * entries a feed already listed join straight away.
+   */
+  confirmWindowMs?: number;
+  /**
+   * When the active set grows by more than this share in one promotion, the
+   * growth alert is raised on the same channel as a held-back update.
+   * 1 means "more than doubled". A source's first fill never alerts.
+   */
+  maxGrowthRatio?: number;
   /**
    * The user's key for a feed that can take one (FeedSource.auth), read on
    * every run so a key added or removed takes effect at once. Main process only.
@@ -100,6 +139,10 @@ export interface FeedStatus {
   needsKey?: boolean;
   /** Its last update was refused for shrinking the list too far; the old list is kept. */
   heldBack?: boolean;
+  /** Entries held for the confirm window before they can enforce anything. */
+  pending?: number;
+  /** The last promotion more than doubled the active set; shown like the shrink hold. */
+  growthAlert?: boolean;
   /**
    * No successful fetch for three intervals, or the last update was held back.
    * Never set while the feed needs a key.
@@ -120,6 +163,11 @@ const MAX_KEYED_REDIRECTS = 3;
  * empties a list another feed also fills. Feeds can only write the three
  * known_bad_* lists; the user's own blocked-hash list is never touched.
  *
+ * A brand-new entry waits out a confirm window in `pending` before it can
+ * enforce anything, so a tampered feed cannot steer containment the moment it
+ * is compromised; unusually fast growth after promotion raises the growth
+ * alert, on the same channel as a held-back update.
+ *
  * Nothing here runs on the inline path: the app calls `run()` on a timer, and
  * the engine sees the new lists on its next lookup.
  */
@@ -130,7 +178,15 @@ export class FeedImporter {
   /** The run in progress, so a run asked for meanwhile joins it instead of fetching twice. */
   private running: Promise<FeedRunResult[]> | undefined;
   private readonly opts: Required<
-    Pick<FeedImporterOptions, 'timeoutMs' | 'maxBytes' | 'maxEntries' | 'minShrinkRatio'>
+    Pick<
+      FeedImporterOptions,
+      | 'timeoutMs'
+      | 'maxBytes'
+      | 'maxEntries'
+      | 'minShrinkRatio'
+      | 'confirmWindowMs'
+      | 'maxGrowthRatio'
+    >
   >;
 
   constructor(
@@ -160,6 +216,8 @@ export class FeedImporter {
       maxBytes: options.maxBytes ?? 64 * 1024 * 1024,
       maxEntries: options.maxEntries ?? 1_000_000,
       minShrinkRatio: options.minShrinkRatio ?? 0.5,
+      confirmWindowMs: options.confirmWindowMs ?? 86_400_000,
+      maxGrowthRatio: options.maxGrowthRatio ?? 1,
     };
   }
 
@@ -213,8 +271,46 @@ export class FeedImporter {
       results.push(r);
       if (r.status === 'updated') touched.add(s.list);
     }
+    // Promotions are time-driven, not fetch-driven: an entry whose window has
+    // passed joins its list even when today's fetch failed or was not due.
+    for (const list of this.sweep(now)) touched.add(list);
+    // Results report what the source's stored list holds once the sweep has
+    // run — a same-run promotion (a zero confirm window) shows up here too.
+    for (const r of results)
+      r.entries = Object.keys(this.state.get(r.sourceId)?.entries ?? {}).length;
     for (const list of touched) this.rebuild(list, now);
     return results;
+  }
+
+  /**
+   * Move every pending entry whose confirm window has passed into its
+   * source's active set, and report which lists changed. A promotion that
+   * more than doubles a source's active set — the shape of a tampered feed
+   * cashing in held entries — raises the growth alert on the same channel as
+   * a held-back update; a source's first fill never alerts.
+   */
+  private sweep(now: number): FeedList[] {
+    const changed: FeedList[] = [];
+    for (const s of this.sources) {
+      const st = this.state.get(s.id);
+      if (!st?.pending) continue;
+      const matured: Record<string, number> = {};
+      let waiting: Record<string, number> | undefined;
+      for (const [e, firstSeen] of Object.entries(st.pending)) {
+        if (firstSeen + this.opts.confirmWindowMs <= now) matured[e] = now;
+        else (waiting ??= {})[e] = firstSeen;
+      }
+      if (Object.keys(matured).length === 0) continue;
+      const prevCount = Object.keys(st.entries).length;
+      const next: FeedState = { ...st, entries: { ...st.entries, ...matured } };
+      if (prevCount > 0 && Object.keys(matured).length > prevCount * this.opts.maxGrowthRatio)
+        next.growthAlert = true;
+      if (waiting) next.pending = waiting;
+      else delete next.pending;
+      this.state.put(next);
+      if (!changed.includes(s.list)) changed.push(s.list);
+    }
+    return changed;
   }
 
   /** Rebuild every feed list from stored state, e.g. after a source is removed from the config. */
@@ -242,6 +338,9 @@ export class FeedImporter {
       if (s.auth) out.keyName = s.auth.key;
       if (needsKey) out.needsKey = true;
       if (st?.heldBack) out.heldBack = true;
+      if (st?.growthAlert) out.growthAlert = true;
+      const pendingCount = Object.keys(st?.pending ?? {}).length;
+      if (pendingCount > 0) out.pending = pendingCount;
       if (st?.fetchedAt !== undefined) out.fetchedAt = st.fetchedAt;
       // An error from before the feed was refused for want of a key is no longer news.
       if (st?.lastError !== undefined && !needsKey) out.lastError = st.lastError;
@@ -315,8 +414,10 @@ export class FeedImporter {
       if (res.status === 304) {
         const st: FeedState = { ...prev, fetchedAt: now, lastAttemptAt: now };
         delete st.lastError;
-        // Unchanged since the list that was accepted, so nothing is held back any more.
+        // Unchanged since the list that was accepted, so nothing is held back
+        // any more and an old growth alert clears with it.
         delete st.heldBack;
+        delete st.growthAlert;
         this.state.put(st);
         return {
           sourceId: s.id,
@@ -361,15 +462,41 @@ export class FeedImporter {
     }
 
     const next: Record<string, number> = {};
+    // A working copy: prev must stay untouched so `added` below can measure
+    // against the state as it was before this import.
+    const prevPending = { ...prev.pending };
     if (s.retainDays > 0) {
       const cutoff = now - s.retainDays * 86_400_000;
       for (const [e, seen] of Object.entries(prev.entries)) if (seen >= cutoff) next[e] = seen;
     }
-    for (const e of entries) next[e] = now;
+    // Entries the feed already listed stay active and refresh in place; a
+    // brand-new one waits out the confirm window in `pending` — keeping its
+    // first listing, however often the feed repeats it — and only the sweep
+    // promotes it.
+    for (const e of entries) {
+      if (e in prev.entries) next[e] = now;
+      else if (!(e in prevPending)) prevPending[e] = now;
+    }
+    // A held entry the feed stops listing is retracted before it ever
+    // enforced anything: a replace-mode feed says so by leaving it out, and
+    // a rolling feed's window bounds how long a one-off listing can wait.
+    if (s.retainDays === 0) {
+      const listed = new Set(entries);
+      for (const e of Object.keys(prevPending)) if (!listed.has(e)) delete prevPending[e];
+    } else {
+      const pendingCutoff = now - s.retainDays * 86_400_000;
+      for (const [e, firstSeen] of Object.entries(prevPending))
+        if (firstSeen < pendingCutoff) delete prevPending[e];
+    }
 
-    const added = Object.keys(next).filter((e) => !(e in prev.entries)).length;
+    // Counted against the previous state, not the one being built: the loop
+    // above has already filed the new listings into `prevPending`.
+    const added = entries.filter(
+      (e) => !(e in prev.entries) && !(e in (prev.pending ?? {})),
+    ).length;
     const removed = Object.keys(prev.entries).filter((e) => !(e in next)).length;
     const st: FeedState = { sourceId: s.id, entries: next, fetchedAt: now, lastAttemptAt: now };
+    if (Object.keys(prevPending).length > 0) st.pending = prevPending;
     const etag = res.headers.get('etag');
     const lastModified = res.headers.get('last-modified');
     if (etag) st.etag = etag;
