@@ -5,7 +5,7 @@
 
 import { afterAll, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readlinkSync } from 'node:fs';
 import { createServer, connect, type Server } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { identifyProcess, killProcess, suspendProcess } from './commands/process.js';
@@ -52,8 +52,13 @@ describe.skipIf(!run)('helper on real Linux', () => {
     await new Promise((r) => setTimeout(r, 200));
     const pid = child.pid!;
     const id = await identifyProcess(sys, pid);
-    expect(id?.path).toBe('/usr/bin/sleep');
-    await suspendProcess(sys, pid, { path: '/usr/bin/sleep' });
+    // /proc/<pid>/exe resolves symlinks: on coreutils-single systems (Rocky
+    // 9's default) /usr/bin/sleep reads as /usr/bin/coreutils. What matters
+    // is that the helper reports the kernel's path — and then accepts that
+    // same path for suspend and kill.
+    const exe = readlinkSync(`/proc/${pid}/exe`);
+    expect(id?.path).toBe(exe);
+    await suspendProcess(sys, pid, { path: id!.path });
     await new Promise((r) => setTimeout(r, 100));
     // Field 3 of /proc/<pid>/stat is the state; T means stopped.
     expect(readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]![0]).toBe('T');
@@ -61,7 +66,7 @@ describe.skipIf(!run)('helper on real Linux', () => {
       code: 'refused',
     });
     const exited = new Promise((r) => child.once('exit', (_code, sig) => r(sig)));
-    await killProcess(sys, pid, { path: '/usr/bin/sleep' });
+    await killProcess(sys, pid, { path: id!.path });
     expect(await exited).toBe('SIGKILL');
   });
 

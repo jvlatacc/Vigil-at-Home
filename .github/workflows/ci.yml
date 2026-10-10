@@ -36,8 +36,9 @@ jobs:
 
   linux:
     # Root-only Linux integration tests (nftables blocks, process signals). Each
-    # one is a *.integration.test.ts under a package's src/ and skips itself
-    # unless VIGIL_LINUX_INTEGRATION=1, so the plain test run above ignores it.
+    # one is a *.integration.test.ts under apps/ or packages/, in their src/,
+    # and skips itself unless VIGIL_LINUX_INTEGRATION=1, so the plain test run
+    # above ignores it.
     runs-on: ubuntu-latest
     # A full run takes about 10 minutes; a hang must not hold a runner for hours.
     timeout-minutes: 30
@@ -125,3 +126,117 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
       - name: Bats fragment and flag contracts
         run: bats appliance/opnsense/tests
+
+  # The container job below runs the same root integration suite in a distro
+  # whose /etc/os-release picks a different branch of setup's commands, reusing
+  # scripts/ci/container-integration-tests.sh (the ubuntu job's loop). It is
+  # privileged so fapolicyd (fanotify) and osquery (eBPF) reach the runner's
+  # kernel, and systemd runs as PID 1 for the services the tests install and
+  # restart. scripts/validate-linux.sh --self-test also runs here unprivileged
+  # in the check job, via its vitest wrapper.
+
+  linux-dnf:
+    # Gap G1: the dnf-family branch of setup's commands had never executed
+    # anywhere — the setup test skipped every non-debian system. Rocky Linux 9
+    # is RHEL lineage (dnf, fapolicyd 1.4.x), the family the validation matrix
+    # marks tier B (gap analysis §5.1).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Start Rocky Linux 9 with systemd
+        run: |
+          # The official images ship systemd without the init symlink (learned
+          # from the first CI run: "exec: /usr/sbin/init: no such file or
+          # directory"). Boot by binary path, installing the package first
+          # only if the image lacks the binary; exec makes systemd PID 1.
+          # Digest pin: frozen deliberately — bump by hand (moving-tag drift
+          # broke boot on 2026-10-09: a fresh rockylinux:9 no longer ships
+          # systemd, and the cold install exceeded the old systemctl poll).
+          # Pulled from quay since 2026-10-09: Docker Hub's anonymous-pull
+          # throttling of GitHub-runner egress IPs timed out the auth-token
+          # fetch twice in a row; quay is Rocky's own registry mirror.
+          # --privileged does not unconfine AppArmor: the Ubuntu runner's
+          # policy denies unix_chkpwd (and even root's chmod) the
+          # cap_dac_override inside the container, which is what broke
+          # sudo's PAM account check (rocky sig#56). Unconfine explicitly.
+          # (The comment sits above the command: inside a backslash-
+          # continuation chain, a '#' swallows the rest of the command.)
+          docker run -d --name vigil-rhel --privileged --cgroupns=host \
+            --security-opt apparmor=unconfined \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+            quay.io/rockylinux/rockylinux:9@sha256:8101994123cf3d0a8fee517bee7f39e555c7d92bd2d9eb3303cc988a0eeed00f \
+            /bin/bash -euc '
+            if [ ! -x /usr/lib/systemd/systemd ]; then
+              # BaseOS-only: the non-BaseOS repo metadata fetches were the silent
+              # stall point (boot hung twice with no dnf output at all); systemd
+              # comes from BaseOS alone. No apostrophes here — this whole script
+              # is one single-quoted string.
+              dnf install -y --disablerepo="*" --enablerepo=baseos --setopt=timeout=30 --setopt=retries=10 systemd
+            fi
+            exec /usr/lib/systemd/systemd --system
+          ' >/dev/null
+          # Poll for the systemd runtime directory, not systemctl: the pinned
+          # image has no systemd until the install above finishes, so a
+          # systemctl probe fails with "executable file not found" for the
+          # whole cold-install window.
+          for i in $(seq 1 240); do
+            s=$(docker exec vigil-rhel /bin/bash -c 'test -d /run/systemd/system && systemctl is-system-running 2>/dev/null || true')
+            case "$s" in running | degraded) break ;; esac
+            sleep 2
+          done
+          # Same acceptance as the poll: container systemd reports degraded
+          # for units irrelevant to the workload (getty, sysctl cruft). The
+          # integration suite below is the real gate; the dumps on degraded
+          # make a load-bearing failure (e.g. vigil-helper.service) visible.
+          s=$(docker exec vigil-rhel systemctl is-system-running 2>/dev/null || true)
+          case "$s" in
+            running | degraded) ;;
+            *)
+              docker logs vigil-rhel | tail -50
+              exit 1
+              ;;
+          esac
+          if [ "$s" = degraded ]; then
+            docker exec vigil-rhel systemctl --failed --no-pager | head -20
+            docker exec vigil-rhel journalctl -p err -b --no-pager | tail -40
+          fi
+      - name: Node.js and pnpm in the container
+        run: |
+          # This whole docker exec script is one single-quoted string: no
+          # apostrophes inside it, not even in comments. An apostrophe
+          # terminates the string early and the trailing commands leak out
+          # of the container — that is exactly how the first chmod attempt
+          # ran on the runner itself and died with EPERM.
+          docker exec vigil-rhel /bin/bash -euc '
+            # curl-minimal (in the base image) conflicts with full curl and
+            # already provides the curl binary, so it is not listed here.
+            dnf install -y git-core nftables procps-ng findutils sudo ca-certificates
+            curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+            dnf install -y nodejs
+            # The major tracks packageManager in package.json (pnpm 10 today).
+            npm install -g pnpm@10
+            git config --global --add safe.directory /workspace
+            # The image ships /etc/shadow as mode 000, and the Ubuntu runner
+            # AppArmor denies unix_chkpwd the cap_dac_override that reading a
+            # 000 file needs — the PAM account check then fails with
+            # "Authentication service cannot retrieve authentication info"
+            # (rocky-linux/sig-cloud-instance-images#56). Owner-read fixes it
+            # for this disposable test container. Never fatal: if the chmod
+            # itself is denied, record the mode and let the
+            # apparmor=unconfined flag on the container carry the fix.
+            chmod 0400 /etc/shadow || stat -c "chmod failed; shadow mode: %a" /etc/shadow
+          '
+      - name: Install dependencies
+        run: docker exec -e ELECTRON_SKIP_BINARY_DOWNLOAD=1 -w /workspace vigil-rhel pnpm install --frozen-lockfile
+      - name: Root integration tests (dnf family)
+        run: docker exec -w /workspace vigil-rhel /bin/bash scripts/ci/container-integration-tests.sh
+
+  # No Debian 12 container job: fapolicyd 1.1.7 cannot open its trust database
+  # inside this container tier ("open_dbi: Permission denied" from the daemon's
+  # own journal, linux-debian on run 37973689485), so it never reports
+  # enforcing and the enforcing check can never pass there. The Debian-family
+  # floor for blocking is fapolicyd 1.3+ — Ubuntu 24.04 above, Debian 13 —
+  # and Debian 12 stays on the documented manual tier.
+  # See design/linux-validation-routines.md.

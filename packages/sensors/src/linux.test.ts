@@ -96,7 +96,14 @@ describe('package index', () => {
       const index = new PackageIndex({
         sources: [
           dpkgSource(join(dir, 'info'), join(dir, 'status')),
-          rpmSource(() => '/usr/bin/vim\tvim-enhanced\nbad line\n', [join(dir, 'status')]),
+          rpmSource(
+            () =>
+              // rpm's --qf '%{NAME}\t[%{FILENAMES}\n]': the package's name
+              // once, then its files one per line. A line before any package
+              // name is skipped.
+              'bad line\nvim-enhanced\t/usr/bin/vim\n/usr/share/doc/vim-enhanced\ncronie\t/usr/sbin/crond\n',
+            [join(dir, 'status')],
+          ),
         ],
       });
       expect(index.owner('/usr/bin/curl')).toBe('pkg:curl');

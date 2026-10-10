@@ -7,10 +7,13 @@ import { existsSync } from 'node:fs';
 import { PackageIndex, dpkgSource, rpmSource, type PackageSource } from '@vigil/sensors';
 import { LINUX_BINARIES } from './system.js';
 
-/** rpm's whole file list, one "path<TAB>package" per line. Run only when the database changed. */
+/** rpm's whole file list, one package per `NAME\t[FILE\n]` group. Run only when the database changed. */
 function rpmList(rpm: string): string | undefined {
   try {
-    return execFileSync(rpm, ['-qa', '--qf', '[%{FILENAMES}\\t%{NAME}\\n]'], {
+    // NAME must stay OUTSIDE the [FILENAMES] iterator: el9's rpm fails a
+    // scalar inside an array iterator with "array iterator used with
+    // different sized arrays" (observed on Rocky 9, rpm 4.16).
+    return execFileSync(rpm, ['-qa', '--qf', '%{NAME}\\t[%{FILENAMES}\\n]'], {
       encoding: 'utf8',
       maxBuffer: 256 * 1024 * 1024,
       timeout: 60_000,
