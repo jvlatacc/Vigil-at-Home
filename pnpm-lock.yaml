@@ -83,6 +83,9 @@ importers:
       '@vigil/sensors':
         specifier: workspace:*
         version: link:../../packages/sensors
+      '@vigil/shipper':
+        specifier: workspace:*
+        version: link:../../packages/shipper
       '@vigil/soc-export':
         specifier: workspace:*
         version: link:../../packages/soc-export
@@ -119,6 +122,28 @@ importers:
       zod:
         specifier: ^4.1.0
         version: 4.6.5
+
+  apps/relay:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.31.0
+        version: 1.31.0(zod@4.6.5)
+      '@vigil/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
+      '@vigil/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      zod:
+        specifier: ^4.1.0
+        version: 4.6.5
+    devDependencies:
+      '@vigil/shipper':
+        specifier: workspace:*
+        version: link:../../packages/shipper
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
 
   packages/agent-hook:
     dependencies:
@@ -195,6 +220,16 @@ importers:
       '@vigil/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/shipper:
+    dependencies:
+      '@vigil/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@vigil/ai':
+        specifier: workspace:*
+        version: link:../ai
 
   packages/soc-export:
     dependencies:

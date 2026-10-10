@@ -36,6 +36,7 @@
     "@vigil/helper": "workspace:*",
     "@vigil/sensors": "workspace:*",
     "@vigil/soc-export": "workspace:*",
+    "@vigil/shipper": "workspace:*",
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.0",

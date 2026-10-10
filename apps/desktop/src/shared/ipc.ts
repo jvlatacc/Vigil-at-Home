@@ -170,6 +170,50 @@ export type AgentPrefs = AgentPrefsShape;
 export const AgentPrefsPatch = AgentPrefs.partial();
 export type AgentPrefsPatch = z.input<typeof AgentPrefsPatch>;
 
+// ------------------------------------------------------------------ relay
+
+/** The telemetry relay's settings, stored under the `telemetry.relay` key. */
+export const RelayConfig = z.object({
+  enabled: z.boolean(),
+  endpointUrl: z.string().max(2048),
+  /** The name the relay knows this device by; the ingest contract bounds its shape. */
+  deviceId: z.string().max(64),
+});
+export type RelayConfig = z.infer<typeof RelayConfig>;
+
+/** A change to some relay settings. */
+export const RelayConfigPatch = RelayConfig.partial();
+export type RelayConfigPatch = z.input<typeof RelayConfigPatch>;
+
+/** The device id the ingest contract accepts (min 8, max 64 chars). */
+export const RelayDeviceId = z.string().min(8).max(64);
+
+/** A device token, as pasted into settings. */
+export const RelayTokenInput = z.string().min(8).max(200);
+
+/** The shipper's position: every record at or before (ts, id) is shipped or skipped. */
+export const RelayCursor = z.object({ ts: z.number(), id: z.string() });
+export type RelayCursor = z.infer<typeof RelayCursor>;
+
+/** What the settings card shows about the shipper right now. */
+export interface RelayStatusView {
+  state: 'off' | 'running' | 'backoff' | 'gap' | 'error' | 'revoked';
+  /** Records read past the cursor and not yet acked. */
+  lagRecords: number;
+  lastAck?: RelayCursor;
+}
+
+/** The relay settings card: config, token state and shipping status. */
+export interface RelayView {
+  config: RelayConfig;
+  token: { saved: boolean; last4?: string };
+  /** The Keychain (safeStorage) is available, so a token can be saved. */
+  canSave: boolean;
+  /** Everything the shipper needs is in place; the toggle can turn it on. */
+  ready: boolean;
+  status: RelayStatusView;
+}
+
 const RuleId = z.string().min(1).max(100);
 /** A rule as JSON text from the editor. Main parses and validates it. */
 const RuleJson = z.string().min(2).max(50_000);
@@ -333,6 +377,11 @@ export const calls = {
   packMemoryMarkdown: z.tuple([]),
   /** Keep or decline a memory change the Lead dog asked for, or undo one it made. */
   decideLeadMemory: z.tuple([Id, Id, z.boolean()]),
+  /** The telemetry relay's settings card (opt-in shipping to a Vigil SOC relay). */
+  getRelay: z.tuple([]),
+  setRelayConfig: z.tuple([RelayConfigPatch]),
+  setRelayToken: z.tuple([RelayTokenInput]),
+  clearRelayToken: z.tuple([]),
 } as const;
 export type CallName = keyof typeof calls;
 
@@ -756,6 +805,10 @@ export interface CallResults {
   forgetPackMemory: void;
   packMemoryMarkdown: string;
   decideLeadMemory: void;
+  getRelay: RelayView;
+  setRelayConfig: RelayView;
+  setRelayToken: RelayView;
+  clearRelayToken: RelayView;
 }
 
 /** One agent session: its process tree (at most 200 nodes) and events (at most 500). */

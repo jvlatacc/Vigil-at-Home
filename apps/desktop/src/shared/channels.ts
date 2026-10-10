@@ -120,6 +120,10 @@ export const CALL_NAMES = [
   'forgetPackMemory',
   'packMemoryMarkdown',
   'decideLeadMemory',
+  'getRelay',
+  'setRelayConfig',
+  'setRelayToken',
+  'clearRelayToken',
 ] as const;
 
 export const PUSH_NAMES = [

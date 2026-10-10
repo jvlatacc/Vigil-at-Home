@@ -5,6 +5,8 @@ import type { HelperInstallResult } from '../shared/ipc.js';
 import type { AiBridge } from './ai.js';
 import { agentsHandlers } from './agents/ipc.js';
 import { packHandlers } from './pack/ipc.js';
+import { relayHandlers } from './relay/ipc.js';
+import type { RelayService } from './relay/service.js';
 import type { Connectors } from './pack/connectors.js';
 import type { PackService } from './pack/service.js';
 import type { AgentService } from './agents/service.js';
@@ -47,6 +49,7 @@ export function registerIpc(
   pack: { service: PackService; connectors: Connectors },
   feedKeys: FeedKeyStore,
   soc: { keys: SocSettingsStore; forwarder: SocForwarder },
+  relay: RelayService,
   helper: HelperControl = noHelper,
 ): void {
   let ruleSuggestions: RuleSuggestions | undefined;
@@ -201,6 +204,7 @@ export function registerIpc(
     flushSoc: () => soc.forwarder.flushNow(),
     ...agentsHandlers(agents),
     ...packHandlers(pack.service, pack.connectors),
+    ...relayHandlers(relay),
   };
 
   for (const name of Object.keys(calls) as CallName[]) {
