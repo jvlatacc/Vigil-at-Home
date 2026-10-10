@@ -1,0 +1,12 @@
+# Vigil kernel monitor — optional TLS forwarding to a collector. install.sh
+# generates /etc/rsyslog.d/vigil-forward.conf from this template when invoked
+# with --collector; it is never written by hand. Rerun install.sh without
+# --collector (or run uninstall.sh) to remove forwarding.
+# Queued omfwd: TLS (ossl, x509/name authentication), retry forever, and a
+# disk-assisted queue that survives rsyslog restarts. See the spec's rsyslog
+# section and https://docs.rsyslog.com/doc/tutorials/reliable_forwarding.html
+global(workDirectory="/var/spool/rsyslog")
+if $programname == 'vigil-kernel-monitor' then {
+	action(type="omfwd" target="@VIG_COLLECTOR_TARGET@" port="@VIG_COLLECTOR_PORT@" protocol="tcp" StreamDriver="ossl" StreamDriverMode="1" StreamDriverAuthMode="x509/name" action.resumeRetryCount="-1" queue.type="LinkedList" queue.filename="vigil-fwd" queue.saveOnShutdown="on" queue.maxDiskSpace="1g")
+	stop
+}
