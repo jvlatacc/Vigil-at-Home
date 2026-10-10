@@ -1,0 +1,13 @@
+{
+  "name": "@vigil/appliance-bundle-build",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build-only dependencies for bundling the appliance collector inside the Packer VM (provision/collector.sh, via npm ci against package-lock.json). Keep the aws4fetch and zod ranges in sync with apps/appliance/package.json and the esbuild range with the root devDependency.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "aws4fetch": "^1.0.20",
+    "esbuild": "^0.28.2",
+    "zod": "^4.1.0"
+  }
+}

@@ -20,3 +20,6 @@ e2e-results/
 perf-results/
 agents-results/
 bench-results/
+
+# Appliance image build output
+apps/appliance/packer/output/
