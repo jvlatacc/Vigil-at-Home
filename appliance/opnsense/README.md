@@ -6,8 +6,8 @@ through a deliberate `/dev/bpf*` devfs grant, and exports NetFlow v9 (or
 IPFIX) over UDP to an off-device collector (default port 2550).
 
 Component spec: blueprint "OPNsense NetFlow Sensor — Vigil appliance
-component spec" (art_4ou8t1mZ). The on-device runbook lands with the docs
-change (`docs/opnsense-sensor.md`).
+component spec" (art_4ou8t1mZ). The on-device runbook is
+`docs/opnsense-sensor.md`.
 
 This directory is deliberately **not** a pnpm workspace member: the appliance
 runs POSIX sh where Node.js does not exist. That makes it the documented
@@ -17,15 +17,17 @@ same discipline with shellcheck and bats instead (the `appliance` job in
 
 ## Layout
 
-| Path                           | Purpose                                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `install.sh`                   | Root-run, idempotent installer: jail userland, devfs ruleset, jail conf, sensor config, configd actions |
-| `uninstall.sh`                 | Manifest-driven clean removal of everything install.sh created                                          |
-| `jail/devfs.rules`             | Reference devfs fragment (`[devfsrules_vigil_flow=5]`, `bpf*` unhide)                                   |
-| `jail/vigil-flow.conf`         | Reference jail conf (non-VNET, `mount.devfs`, `persist`)                                                |
-| `share/vigil-flow.conf`        | Sensor config template (exact spec keys)                                                                |
-| `share/vigil-flow-jail-ctl.sh` | Thin jexec host wrapper behind `configctl vigil-flow status\|reconfigure`                               |
-| `tests/`                       | Hermetic bats tests (no network, no host modification)                                                  |
+| Path                             | Purpose                                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `install.sh`                     | Root-run, idempotent installer: jail userland, devfs ruleset, jail conf, sensor config, configd actions |
+| `uninstall.sh`                   | Manifest-driven clean removal of everything install.sh created                                          |
+| `jail/devfs.rules`               | Reference devfs fragment (`[devfsrules_vigil_flow=5]`, `bpf*` unhide)                                   |
+| `jail/vigil-flow.conf`           | Reference jail conf (non-VNET, `mount.devfs`, `persist`)                                                |
+| `share/vigil-flow.conf`          | Sensor config template (exact spec keys)                                                                |
+| `share/vigil-flow-supervisor.sh` | The in-jail daemon: validation gate, per-interface softflowd supervision, health JSON                   |
+| `share/vigil-flow-ctl.sh`        | In-jail operator control: `start\|stop\|status\|validate\|reconfigure`                                  |
+| `share/vigil-flow-jail-ctl.sh`   | Thin jexec host wrapper behind `configctl vigil-flow status\|reconfigure`                               |
+| `tests/`                         | Hermetic bats tests (no network, no host modification)                                                  |
 
 ## Install (run as root on the OPNsense host)
 
@@ -75,12 +77,14 @@ sh uninstall.sh
 Stops the jail, strips the marked devfs and jail.conf blocks, deletes the
 recorded files, and removes the jail tree and manifest.
 
-## Status of this scaffold
+## Status
 
-This change provisions the jail and the host integration. The in-jail daemon
-(`vigil-flow-ctl.sh` + `vigil-flow-supervisor.sh`, which `exec.start` already
-wires) arrives with the sensor-daemon change of the same plan; until then the
-installer provisions but does not start the jail.
+The scaffold (PR #2) and the in-jail daemon (PR #29) are both shipped: the
+daemon scripts are `share/vigil-flow-ctl.sh` + `share/vigil-flow-supervisor.sh`,
+and `exec.start` runs the ctl, which starts and supervises the sensor on jail
+boot. The installer provisions the jail and the host integration; it does not
+copy the daemon scripts into the jail — the runbook's finish-the-install step
+does that by hand.
 
 ## Verification boundary
 
