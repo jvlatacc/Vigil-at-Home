@@ -62,14 +62,35 @@ if [ "$verify_rc" -ne 0 ] || [ -n "$verify_out" ]; then
 fi
 echo "unit verified"
 
-step "rsyslog drop-in syntax"
+step "rsyslog drop-in syntax (probe copies in /etc/rsyslog.d)"
 command -v rsyslogd >/dev/null || fail "rsyslogd not installed (apt-get install rsyslog)"
-rsyslogd -N1 -f "$SRC/rsyslog/vigil-kernel-monitor.conf" || fail "local drop-in does not parse"
+check_rsyslog() {
+  src=$1
+  label=$2
+  # rsyslogd may run confined (e.g. the Ubuntu AppArmor profile): a probe
+  # copy in the checkout or /tmp gets EACCES even under sudo. Installed
+  # drop-ins live in /etc/rsyslog.d, so probe a copy from there.
+  probe=/etc/rsyslog.d/zz-vigil-packaging-check.conf
+  errlog=$(mktemp)
+  install -m 644 "$src" "$probe"
+  set +e
+  rsyslogd -N1 -f "$probe" 2>"$errlog"
+  rc=$?
+  set -e
+  rm -f "$probe"
+  if [ "$rc" -ne 0 ] || grep -qi 'error' "$errlog"; then
+    sed 's/^/  /' "$errlog" >&2
+    rm -f "$errlog"
+    fail "$label does not parse (rsyslogd -N1 rc=$rc)"
+  fi
+  rm -f "$errlog"
+}
+check_rsyslog "$SRC/rsyslog/vigil-kernel-monitor.conf" "local drop-in"
 FWD_SAMPLE=$(mktemp)
 sed -e 's/@VIG_COLLECTOR_TARGET@/collector.example/' \
   -e 's/@VIG_COLLECTOR_PORT@/6514/' \
   "$SRC/rsyslog/vigil-forward.conf.in" > "$FWD_SAMPLE"
-rsyslogd -N1 -f "$FWD_SAMPLE" || fail "forward template does not parse"
+check_rsyslog "$FWD_SAMPLE" "forward template"
 rm -f "$FWD_SAMPLE"
 echo "both drop-ins parse"
 
