@@ -114,6 +114,7 @@ const LINUX_FILES = [
   'install.sh',
   'uninstall.sh',
   'vigil-helper',
+  'vigil-helper-launcher',
   'vigil-helper.service',
   'com.vigilathome.helper.policy',
 ];

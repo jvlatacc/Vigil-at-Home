@@ -251,11 +251,17 @@ export class HelperLink
    * Hand the helper the blocking rules it can run itself (and Santa before
    * launch). Null while unconnected, before anything is sent.
    *
-   * A change to the rules goes as one detection.sync carrying the contents of
-   * every list the helper may not have, which the helper puts in force whole
-   * or not at all. If it still lacks one (it says so and changes nothing), the
-   * sync is sent again with it. When only list contents changed (a feed
-   * refresh, a newly blocked program), the lists go on their own, in parts.
+   * A change to the rules goes as one detection.sync of the rules alone. The
+   * contents of every list the helper may not have go on first, in 1,000-entry
+   * parts (detection.list.set), so no single line ever carries a big feed:
+   * the helper caps its lines, and a rules sync that carried lists inline
+   * would not fit. The parts take effect as they complete, under the rules
+   * already in force — adding entries can only tighten what matches, and the
+   * helper bounds how fast entries a list drops can stop blocking — so
+   * landing lists before the rules cannot loosen anything if the sync is
+   * then refused (a declined password dialog). If the helper still lacks a
+   * list (it says so and changes nothing), that list goes on and the sync is
+   * sent again.
    *
    * If the rules turn something off or add an exception, the helper asks for
    * the admin password first; a cancelled dialog throws a HelperCallError
@@ -304,6 +310,11 @@ export class HelperLink
         await this.sendLists(client, set, digests, changed);
         return { applied: true, needLists: [], preexec: null };
       }
+      // Every changed list goes on in parts first, so the sync itself stays
+      // small: a list can hold up to LIST_ENTRIES_MAX entries, and a sync
+      // carrying them inline would cross the helper's line cap. See the
+      // method comment for why landing the lists first cannot loosen anything.
+      await this.sendLists(client, set, digests, changed);
       const base = {
         kind: 'detection.sync' as const,
         rules: set.rules,
@@ -318,7 +329,6 @@ export class HelperLink
         ...(set.legacy?.length ? { legacy: set.legacy } : {}),
         ...(opts.syncId ? { syncId: opts.syncId } : {}),
       };
-      let carry = changed;
       // Without a dialog the helper answers at once; with one it waits on the password.
       const wait = opts.ask === false ? ACTION_TIMEOUT_MS : RELEASE_TIMEOUT_MS;
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -326,17 +336,7 @@ export class HelperLink
         // it, so a password typed after the timeout can't put it in force
         // after rulesState() said it wasn't.
         const notAfter = Date.now() + wait - SYNC_DEADLINE_MARGIN_MS;
-        const sync = {
-          ...base,
-          notAfter,
-          ...(carry.length
-            ? {
-                entries: Object.fromEntries(
-                  carry.map((n) => [n, [...new Set(set.lists[n] ?? [])]]),
-                ),
-              }
-            : {}),
-        };
+        const sync = { ...base, notAfter };
         let out: HelperRulesOutcome;
         if (opts.ask === false) {
           const tried = await withTimeout(client.attempt<HelperRulesOutcome>(sync), wait);
@@ -356,7 +356,9 @@ export class HelperLink
           this.confirmedLists = new Map(Object.entries(digests));
           return out;
         }
-        carry = [...new Set([...carry, ...out.needLists])];
+        // The helper changed nothing and says what it lacks: put those on
+        // (in parts) and sync again.
+        if (out.needLists.length) await this.sendLists(client, set, digests, out.needLists);
       }
       throw new HelperCallError('the helper kept asking for its lists', 'failed');
     } catch (err) {

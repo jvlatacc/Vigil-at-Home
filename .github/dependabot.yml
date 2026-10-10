@@ -4,7 +4,9 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    # Globs instead of a single `directory: /`, which does not discover pnpm
+    # workspace manifests — without them, apps/* and packages/* go unwatched.
+    directories: ['/', '/apps/*', '/packages/*']
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

@@ -209,6 +209,10 @@ export interface HelperRequest {
  * somewhere else, which Vigil does not follow (commands/persistence.ts).
  * `not-your-item`: a startup item in another user's folder, or not the
  * asking user's own (commands/persistence.ts).
+ * `peer-not-pinned`: a state-changing command was refused because the
+ * connecting process is not the app the helper serves (peer.ts).
+ * `peer-unidentified`: a state-changing command was refused because the
+ * connecting process could not be identified (peer.ts).
  */
 export type ErrorCode =
   | 'invalid'
@@ -218,7 +222,9 @@ export type ErrorCode =
   | 'installer-owned'
   | 'owner-cannot-write'
   | 'startup-folder-linked'
-  | 'not-your-item';
+  | 'not-your-item'
+  | 'peer-not-pinned'
+  | 'peer-unidentified';
 
 /** The codes the app words itself, in one calm line, rather than showing the message. */
 export const APP_WORDED_CODES = [

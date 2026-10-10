@@ -1,3 +1,19 @@
 packages:
   - apps/*
   - packages/*
+
+# AUD-01 (2026-10-09 audit): pnpm audit flags two advisories in the build-only
+# electron-builder chain (release tooling; none of it ships in the app):
+#   - GHSA-ch52-4w7c-c8xp (high, CVE-2026-93748): http-cache-semantics <= 4.2.0,
+#     via @electron/get > got > cacheable-request
+#   - GHSA-hp3w-g68c-fv3c (moderate, CVE-2026-97058): sprintf-js <= 1.1.3,
+#     via @electron/get > global-agent > roarr
+# The advisory database lists no patched version for either: sprintf-js has not
+# published since 2023, and http-cache-semantics@4.3.0 (2026-10-04) does not
+# contain the max-stale fix (verified by tarball diff; upstream fix PR
+# kornelski/http-cache-semantics#58 was rejected). Waived until a patched
+# release exists; `pnpm audit --prod` was already clean (dev-only path).
+auditConfig:
+  ignoreGhsas:
+    - GHSA-ch52-4w7c-c8xp
+    - GHSA-hp3w-g68c-fv3c

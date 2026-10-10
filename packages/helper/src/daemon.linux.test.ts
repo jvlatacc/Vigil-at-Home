@@ -8,6 +8,7 @@ import type { HelperRan } from './fastpath.js';
 import { HelperClient } from './client.js';
 import { linuxPaths, type HelperPaths } from './config.js';
 import { runDaemon, type SensorHealth } from './daemon.js';
+import { allowAllPeer } from './testing/allowAllPeer.js';
 import type { ActionOutcome } from './executor.js';
 import { FakeLinuxSystem } from './testing/fakeLinuxSystem.js';
 
@@ -31,6 +32,9 @@ beforeAll(async () => {
     paths,
     sys,
     log: () => {},
+    // The fake system cannot resolve real peers; the gate itself is tested
+    // in peer.test.ts and peer.integration.test.ts.
+    peer: allowAllPeer(),
     approvalOwnerUid: process.getuid!(),
     sensorBinaries: { santa: false, osquery: join(root, 'no-osqueryd') },
     osquery: false,

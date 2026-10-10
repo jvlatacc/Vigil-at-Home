@@ -5,15 +5,24 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { HelperAction } from './protocol.js';
+import type { HelperAction, HelperCommand } from './protocol.js';
 
 export type ActionState = 'active' | 'undone' | 'final';
 
 export interface JournalEntry {
   id: string;
-  kind: HelperAction['kind'];
-  /** What the action was asked to do (the validated command). */
-  command: HelperAction;
+  /** An action's kind, or `peer-refused` for a command a peer may not run (peer.ts). */
+  kind: HelperAction['kind'] | 'peer-refused';
+  /**
+   * What the action was asked to do (the validated command). Absent on a
+   * peer-refused row, which names the attempt instead of carrying the
+   * command (it can run to megabytes and was never run).
+   */
+  command?: HelperAction;
+  /** peer-refused rows: which command kind was refused. */
+  attempted?: HelperCommand['kind'];
+  /** peer-refused rows: the peer's pid, when it could be identified. */
+  peerPid?: number;
   /** What undo needs: original path, previous Santa rule, process start time... */
   undo?: Record<string, unknown>;
   /** active = in force and reversible; final = done and nothing to reverse (kill, releases); undone = reversed. */

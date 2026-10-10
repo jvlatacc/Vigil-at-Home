@@ -3,24 +3,62 @@
 // connections that subscribed to sensor events.
 //
 // The socket file is owned by the logged-in user with mode 0600, so other
-// accounts on the Mac cannot talk to the helper. Anything running as that
-// user can, which is why releasing actions need the admin password.
+// accounts cannot talk to the helper. Anything running as that user can,
+// which is why releasing actions need the admin password — and why the
+// peer guard (peer.ts), when wired, refuses state-changing commands from
+// same-user processes the helper does not serve, while read-only queries
+// stay open to every same-user peer — and why the limits below bound what
+// any single connection can make the root process parse or hold: line
+// sizes are capped, requests are budgeted per connection, and idle
+// connections are cut.
 
 import { createServer, type Server, type Socket } from 'node:net';
 import { chmodSync, chownSync, rmSync } from 'node:fs';
 import type { SensorEvent } from '@vigil/sensors';
-import { parseRequest, type HelperResponse } from './protocol.js';
+import { parseRequest, type ErrorCode, type HelperResponse } from './protocol.js';
 import type { Executor } from './executor.js';
+import type { PeerGuard } from './peer.js';
 import type { HelperRan } from './fastpath.js';
 import { ActionError } from './commands/errors.js';
 
 // Large enough for any command but detection.sync; still bounded.
 const MAX_LINE = 1024 * 1024;
-// detection.sync carries its lists' contents (up to LIST_ENTRIES_MAX each),
-// so rules and lists go in force together; it alone may be this long.
-const MAX_SYNC_LINE = 64 * 1024 * 1024;
+// detection.sync carries the app's rules, exceptions and app rules — not
+// list contents: the app puts lists on the helper in 1,000-entry parts
+// first (each part measures at most about 258 KB, well under MAX_LINE).
+// A rule set built from the whole builtin catalog measured 4,312,723 bytes
+// serialized for 64 copies of it, so 8 MiB leaves room while keeping a
+// hostile oversized sync from ever reaching JSON.parse.
+const MAX_SYNC_LINE = 8 * 1024 * 1024;
+// Requests a connection may make before it is cut off. A feed refresh
+// sends up to 200 list parts plus the sync on one connection, so the
+// burst clears 240; the refill keeps normal use flowing while stopping a
+// same-user process from pinning the root parser with a stream of lines.
+const REQUEST_BURST = 240;
+const REQUEST_REFILL_PER_SECOND = 20;
+// A connection that asks nothing for five minutes is cut; event
+// subscribers are exempt, since the helper writes to them unasked.
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+// After refusing a line the socket ends gracefully so the refusal is read
+// before any FIN; a peer that never closes its side is reaped after this long.
+const REFUSAL_LINGER_MS = 10_000;
 const SYNC_PREFIX = /^\{"id":"[^"\\]{1,200}","command":\{"kind":"detection\.sync"/;
+const ID_PREFIX = /^\{"id":"([^"\\]{1,200})"/;
 const RECENT_EVENTS = 2000;
+
+/** Per-connection limits; every field has a default, so tests pass only what they exercise. */
+export interface ServerLimits {
+  /** Cap for a non-sync request line. */
+  maxLine: number;
+  /** Cap for a line that starts as a detection.sync. */
+  maxSyncLine: number;
+  /** Requests a connection may burst before it is cut off. */
+  requestBurst: number;
+  /** How fast the burst budget refills, per second. */
+  requestRefillPerSecond: number;
+  /** How long a connection may sit silent before it is cut. */
+  idleTimeoutMs: number;
+}
 
 export interface HelperServerOptions {
   socketPath: string;
@@ -28,6 +66,13 @@ export interface HelperServerOptions {
   /** Owner for the socket file (the console user). Skipped when undefined. */
   ownerUid?: number | undefined;
   log?: ((msg: string) => void) | undefined;
+  /** Overrides for the per-connection limits above. */
+  limits?: Partial<ServerLimits>;
+  /**
+   * Peer identity gate (peer.ts): what the connecting process may run.
+   * Direct constructions without one (tests, socketProbe) skip the check.
+   */
+  peer?: PeerGuard | undefined;
 }
 
 export class HelperServer {
@@ -36,8 +81,18 @@ export class HelperServer {
   private readonly connections = new Set<Socket>();
   private readonly recent: string[] = [];
   private readonly recentIds: string[] = [];
+  private readonly limits: ServerLimits;
 
-  constructor(private readonly opts: HelperServerOptions) {}
+  constructor(private readonly opts: HelperServerOptions) {
+    this.limits = {
+      maxLine: MAX_LINE,
+      maxSyncLine: MAX_SYNC_LINE,
+      requestBurst: REQUEST_BURST,
+      requestRefillPerSecond: REQUEST_REFILL_PER_SECOND,
+      idleTimeoutMs: IDLE_TIMEOUT_MS,
+      ...opts.limits,
+    };
+  }
 
   async listen(): Promise<void> {
     rmSync(this.opts.socketPath, { force: true });
@@ -80,26 +135,91 @@ export class HelperServer {
 
   private onConnection(sock: Socket): void {
     let buf = '';
+    let budget = this.limits.requestBurst;
+    let chargedAt = Date.now();
+    // Requests the executor is still running. A connection the server is
+    // cutting closes only after every answer it owes has flushed, so a
+    // refusal cannot swallow the answers to lines accepted in the same batch.
+    let inFlight = 0;
+    let closing = false;
+    let closeWhenIdle: (() => void) | undefined;
     this.connections.add(sock);
+    const idle = setTimeout(() => {
+      if (this.subscribers.has(sock)) return;
+      this.opts.log?.('idle connection cut off');
+      sock.destroy();
+    }, this.limits.idleTimeoutMs);
+    // Counts one request; false when the connection's budget is spent.
+    const charge = (): boolean => {
+      const now = Date.now();
+      budget = Math.min(
+        this.limits.requestBurst,
+        budget + ((now - chargedAt) / 1000) * this.limits.requestRefillPerSecond,
+      );
+      chargedAt = now;
+      if (budget < 1) return false;
+      budget -= 1;
+      return true;
+    };
+    const run = (line: string): void => {
+      inFlight++;
+      void this.onLine(sock, line).finally(() => {
+        inFlight--;
+        if (inFlight === 0 && closeWhenIdle) {
+          const cut = closeWhenIdle;
+          closeWhenIdle = undefined;
+          cut();
+        }
+      });
+    };
+    const cut = (): void => {
+      closing = true;
+      // The refusal must reach the client before the connection dies. A socket
+      // closed while inbound bytes it never read are still queued raises a TCP
+      // RST that can beat the queued reply (observed on macOS), so stop
+      // parsing, discard the backlog, and end cleanly — a backstop reaps a
+      // peer that never closes.
+      sock.removeAllListeners('data');
+      sock.resume();
+      sock.end();
+      const reap = setTimeout(() => sock.destroy(), REFUSAL_LINGER_MS);
+      sock.once('close', () => clearTimeout(reap));
+    };
+    const refuseAndCut = (line: string, error: string, code: ErrorCode): void => {
+      if (closing) return;
+      this.refuse(sock, line, error, code);
+      if (inFlight > 0) closeWhenIdle = cut;
+      else cut();
+    };
     sock.setEncoding('utf8');
     sock.on('data', (chunk: string) => {
+      if (closing) return;
+      idle.refresh();
       buf += chunk;
       // Only the new chunk can end the line, so a long sync isn't rescanned per chunk.
       if (!chunk.includes('\n')) {
-        if (buf.length > MAX_LINE) {
-          const max = SYNC_PREFIX.test(buf.slice(0, 400)) ? MAX_SYNC_LINE : MAX_LINE;
-          if (buf.length > max) sock.destroy();
-        }
+        if (this.lineOverLimit(buf)) refuseAndCut(buf, 'request too long', 'invalid');
         return;
       }
       let nl: number;
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl);
         buf = buf.slice(nl + 1);
-        if (line.trim()) void this.onLine(sock, line);
+        if (!line.trim()) continue;
+        if (this.lineOverLimit(line)) {
+          refuseAndCut(line, 'request too long', 'invalid');
+          return;
+        }
+        if (!charge()) {
+          this.opts.log?.('request budget exhausted');
+          refuseAndCut(line, 'too many requests', 'refused');
+          return;
+        }
+        run(line);
       }
     });
     const forget = () => {
+      clearTimeout(idle);
       this.subscribers.delete(sock);
       this.connections.delete(sock);
     };
@@ -107,8 +227,26 @@ export class HelperServer {
     sock.on('error', forget);
   }
 
+  /**
+   * The limit a line exceeds, if any. The prefix test reads only the line's
+   * start; JSON lets a later duplicate "kind" win, so the parsed kind is
+   * checked again once the line parses (onLine).
+   */
+  private lineOverLimit(line: string): boolean {
+    const max = SYNC_PREFIX.test(line.slice(0, 400))
+      ? this.limits.maxSyncLine
+      : this.limits.maxLine;
+    return line.length > max;
+  }
+
+  /** Answer a bad line — a real client learns why; a hostile one gains one short response. */
+  private refuse(sock: Socket, line: string, error: string, code: ErrorCode = 'invalid'): void {
+    const id = ID_PREFIX.exec(line.slice(0, 400))?.[1] ?? '';
+    this.send(sock, { id, ok: false, error, code });
+  }
+
   private send(sock: Socket, resp: HelperResponse): void {
-    if (!sock.destroyed) sock.write(JSON.stringify(resp) + '\n');
+    if (!sock.destroyed && sock.writable) sock.write(JSON.stringify(resp) + '\n');
   }
 
   private async onLine(sock: Socket, line: string): Promise<void> {
@@ -119,9 +257,20 @@ export class HelperServer {
     }
     // The size check above reads only the line's start; JSON lets a later
     // duplicate "kind" win, so check the parsed kind too.
-    if (line.length > MAX_LINE && req.command.kind !== 'detection.sync') {
+    if (line.length > this.limits.maxLine && req.command.kind !== 'detection.sync') {
       this.send(sock, { id: req.id, ok: false, error: 'request too long', code: 'invalid' });
       return;
+    }
+    // Who is asking? The peer gate answers what this connection may run
+    // (peer.ts): read-only queries for any same-user peer, state-changing
+    // commands only for the app the helper serves. Absent guard (tests,
+    // socketProbe): no check, as before this gate existed.
+    if (this.opts.peer) {
+      const verdict = await this.opts.peer.check(sock, req.command);
+      if (!verdict.allow) {
+        this.send(sock, { id: req.id, ok: false, error: verdict.detail, code: verdict.code });
+        return;
+      }
     }
     if (req.command.kind === 'events.subscribe') {
       const since = req.command.since;

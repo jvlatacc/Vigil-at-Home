@@ -40,6 +40,7 @@ import { Approvals } from './approval.js';
 import { HelperClient } from './client.js';
 import { linuxPaths } from './config.js';
 import { runDaemon } from './daemon.js';
+import { allowAllPeer } from './testing/allowAllPeer.js';
 import { removeLinuxOsquery } from './linuxOsquery.js';
 import { removePinStore } from './pinStore.js';
 import { LINUX_BINARIES, realSystem } from './system.js';
@@ -267,6 +268,9 @@ describe.skipIf(!run)('Vigil on real Linux, app closed', () => {
       sys,
       approvalOwnerUid: 0,
       log: (m) => logs.push(m),
+      // The fake system cannot resolve real peers; the gate itself is
+      // tested in peer.test.ts and peer.integration.test.ts.
+      peer: allowAllPeer(),
     });
 
     // Hand over the rules and lists the way the app does (helper.ts syncRules).
