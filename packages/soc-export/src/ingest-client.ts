@@ -145,8 +145,27 @@ export class IngestClient {
     const deadline = Date.now() + this.pollTimeoutMs;
     for (;;) {
       const path = `${JOB_PATH}/${encodeURIComponent(jobId)}`;
-      const response = await this.send('GET', path);
-      const job = parseJobSnapshot(await readJson(response));
+      let job: IngestJobSnapshot;
+      try {
+        const response = await this.send('GET', path);
+        job = parseJobSnapshot(await readJson(response));
+      } catch (cause) {
+        // The SOC tracks jobs in memory per uvicorn worker (their Docker
+        // image runs `--workers 2`), and polls have no worker affinity —
+        // an "unknown job" 404 can simply mean this poll landed on the
+        // other worker. Keep polling until the deadline before believing it.
+        if (cause instanceof TransportError && cause.status === 404) {
+          if (Date.now() + this.pollIntervalMs > deadline) {
+            throw new TransportError(
+              `Ingestion job ${jobId} stayed unknown for ${this.pollTimeoutMs}ms — the accepting worker may have restarted.`,
+              { status: 404, retryable: true, cause },
+            );
+          }
+          await sleep(this.pollIntervalMs);
+          continue;
+        }
+        throw cause;
+      }
       if (job.status === 'succeeded') return job;
       if (job.status === 'failed') {
         throw new TransportError(`Ingestion job ${jobId} failed: ${job.error || job.message}`, {

@@ -60,10 +60,9 @@ describe('redactCaseDocument', () => {
 });
 
 describe('serializeCase', () => {
-  it('round-trips the document as the single JSON object the router expects', () => {
+  it('wraps the document as the cases-keyed object the router routes', () => {
     const doc = IngestCase.parse(caseDoc());
     const serialized = serializeCase(redactCaseDocument(doc, TEST_NAMES));
-    expect(JSON.parse(serialized)).toEqual(redactCaseDocument(doc, TEST_NAMES));
-    expect(serialized.startsWith('{')).toBe(true);
+    expect(JSON.parse(serialized)).toEqual({ cases: [redactCaseDocument(doc, TEST_NAMES)] });
   });
 });
