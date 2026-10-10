@@ -3,3 +3,4 @@ pnpm-lock.yaml
 **/out
 **/coverage
 apps/desktop/build
+demo/.run
