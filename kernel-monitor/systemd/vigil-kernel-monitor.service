@@ -7,7 +7,7 @@ After=rsyslog.service
 
 [Service]
 Type=simple
-ExecStart=/usr/libexec/vigil-kernel-monitor/vigil-kernel-monitor --index-dir /var/lib/vigil/kernel-monitor
+ExecStart=/usr/libexec/vigil-kernel-monitor/vigil-kernel-monitor --index-dir /var/lib/vigil/kernel-monitor --rules-dir /etc/vigil/kernel-monitor/rules
 # CAP_BPF + CAP_PERFMON cover tracepoint loads on 5.8+; BPF LSM attach would
 # need CAP_BPF only. No CAP_SYS_ADMIN.
 AmbientCapabilities=CAP_BPF CAP_PERFMON
