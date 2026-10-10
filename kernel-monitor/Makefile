@@ -20,7 +20,8 @@ BPF_CFLAGS ?= -O2 -g -Wall -target bpf -D__TARGET_ARCH_$(ARCH) -I$(SRC_DIR)
 LIBS := -lbpf -lelf -lz
 
 DAEMON_SRCS := $(SRC_DIR)/daemon.c $(SRC_DIR)/event.c $(SRC_DIR)/index.c \
-	       $(SRC_DIR)/pipeline.c $(SRC_DIR)/syslog_emit.c $(SRC_DIR)/util.c \
+	       $(SRC_DIR)/json.c $(SRC_DIR)/pipeline.c $(SRC_DIR)/rules.c \
+	       $(SRC_DIR)/syslog_emit.c $(SRC_DIR)/util.c \
 	       $(SRC_DIR)/feature_probe.c $(SRC_DIR)/health.c $(SRC_DIR)/attach.c
 DAEMON_OBJS := $(patsubst $(SRC_DIR)/%.c,$(BUILD)/%.o,$(DAEMON_SRCS))
 

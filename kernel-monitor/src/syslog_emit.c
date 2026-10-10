@@ -95,6 +95,53 @@ int vig_syslog_line(int pri, const char *msgid, const struct vig_event *e,
 	return out_n;
 }
 
+int vig_syslog_alert_pri(const char *severity)
+{
+	if (strcmp(severity, "critical") == 0)
+		return VIG_SYSLOG_PRI_ALERT_CRITICAL;
+	if (strcmp(severity, "warning") == 0)
+		return VIG_SYSLOG_PRI_ALERT_WARNING;
+	return -1;
+}
+
+int vig_syslog_alert_line(int pri, const char *rule, const char *severity,
+			  const struct vig_event *e,
+			  const struct timespec *wall, const char *hostname,
+			  int procid, char *buf, size_t cap)
+{
+	char ts[64], msg[VIG_LINE_MAX];
+
+	if (vig_iso8601_ms(wall, ts, sizeof ts) != 0)
+		return -1;
+	/* the alert body IS the triggering record's index line: identical
+	 * JSON by construction, per the spec */
+	if (vig_index_line(e, wall, msg, sizeof msg) < 0)
+		return -1;
+
+	char rule_esc[256], sev_esc[32];
+
+	if (vig_json_escape(rule, rule_esc, sizeof rule_esc) != 0)
+		return -1;
+	if (vig_json_escape(severity, sev_esc, sizeof sev_esc) != 0)
+		return -1;
+
+	char sd[512];
+	int n = snprintf(sd, sizeof sd,
+			 "[%s rule=\"%s\" sev=\"%s\" tgid=\"%u\"]",
+			 VIG_SYSLOG_SD_ID, rule_esc, sev_esc, e->tgid);
+
+	if (n < 0 || (size_t)n >= sizeof sd)
+		return -1;
+
+	int out_n = snprintf(buf, cap, "<%d>1 %s %s %s %d %s %s %s", pri, ts,
+			     hostname, VIG_SYSLOG_APP_NAME, procid,
+			     VIG_SYSLOG_MSGID_ALERT, sd, msg);
+
+	if (out_n < 0 || (size_t)out_n >= cap)
+		return -1;
+	return out_n;
+}
+
 static int sink_connect(struct vig_syslog *s)
 {
 	int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -133,18 +180,8 @@ static void sink_record(struct vig_syslog *s, const char *line)
 	s->recorded[s->recorded_n++] = copy;
 }
 
-int vig_syslog_emit(struct vig_syslog *s, int pri, const char *msgid,
-		    const struct vig_event *e, const struct timespec *wall,
-		    const char *hostname)
+static int sink_send(struct vig_syslog *s, const char *line)
 {
-	char line[VIG_LINE_MAX];
-
-	if (vig_syslog_line(pri, msgid, e, wall, hostname, (int)getpid(), line,
-			    sizeof line) < 0) {
-		fprintf(stderr, "vigil-kernel-monitor: syslog line truncated, dropped\n");
-		return -1;
-	}
-
 	if (s->path[0] == '\0') {
 		sink_record(s, line);
 		return 0;
@@ -166,6 +203,35 @@ int vig_syslog_emit(struct vig_syslog *s, int pri, const char *msgid,
 		return -1;
 	}
 	return 0;
+}
+
+int vig_syslog_emit(struct vig_syslog *s, int pri, const char *msgid,
+		    const struct vig_event *e, const struct timespec *wall,
+		    const char *hostname)
+{
+	char line[VIG_LINE_MAX];
+
+	if (vig_syslog_line(pri, msgid, e, wall, hostname, (int)getpid(), line,
+			    sizeof line) < 0) {
+		fprintf(stderr, "vigil-kernel-monitor: syslog line truncated, dropped\n");
+		return -1;
+	}
+	return sink_send(s, line);
+}
+
+int vig_syslog_alert(struct vig_syslog *s, int pri, const char *rule,
+		     const char *severity, const struct vig_event *e,
+		     const struct timespec *wall, const char *hostname)
+{
+	char line[VIG_LINE_MAX];
+
+	if (vig_syslog_alert_line(pri, rule, severity, e, wall, hostname,
+				  (int)getpid(), line,
+				  sizeof line) < 0) {
+		fprintf(stderr, "vigil-kernel-monitor: syslog alert line truncated, dropped\n");
+		return -1;
+	}
+	return sink_send(s, line);
 }
 
 const char *const *vig_syslog_recorded(const struct vig_syslog *s, size_t *n)

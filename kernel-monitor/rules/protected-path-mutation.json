@@ -1,0 +1,10 @@
+{
+  "name": "protected-path-mutation",
+  "description": "A file was opened for writing, unlinked, renamed, or truncated under system configuration and code locations, or touching a shell profile or systemd unit file. Renames match when either endpoint hits.",
+  "kind": "file",
+  "severity": "warning",
+  "match": {
+    "pathPrefixes": ["/etc", "/usr", "/boot"],
+    "pathSuffixes": [".service", ".timer", ".bashrc", ".profile", ".bash_profile"]
+  }
+}
