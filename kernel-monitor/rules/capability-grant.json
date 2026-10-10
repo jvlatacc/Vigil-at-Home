@@ -1,0 +1,11 @@
+{
+  "name": "capability-grant",
+  "description": "A task set its effective uid to 0 through the capset path and is not a known launcher. Cred-cred changes (the setuid family) are caught by exec-after-escalation via the escalation marks instead.",
+  "kind": "privilege.change",
+  "severity": "critical",
+  "match": {
+    "toEuid": 0,
+    "source": "capset",
+    "exemptComm": ["sudo", "pkexec"]
+  }
+}
