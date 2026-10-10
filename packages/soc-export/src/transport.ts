@@ -44,7 +44,7 @@ export interface VStrikeClientOptions {
 const DEFAULT_TIMEOUT_MS = 10_000;
 const PUSH_PATH = '/api/integrations/vstrike/findings';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 function isFindingStatus(value: unknown): value is VStrikeFindingResultStatus {
@@ -89,7 +89,7 @@ function parsePushResponse(body: unknown): VStrikePushResponse {
   };
 }
 
-async function readJson(response: Response): Promise<unknown> {
+export async function readJson(response: Response): Promise<unknown> {
   try {
     return JSON.parse(await response.text()) as unknown;
   } catch (cause) {
