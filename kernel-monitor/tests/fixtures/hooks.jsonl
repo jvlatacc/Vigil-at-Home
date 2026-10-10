@@ -1,0 +1,18 @@
+{"scenario": "open for write", "kind": "file", "action": "open-w", "flags": 577, "path": "/tmp/x", "monoNs": 1000, "tgid": 100, "ppid": 10, "uid": 1000, "euid": 1000, "comm": "sh"}
+{"scenario": "open with truncate flag", "kind": "file", "action": "open-w", "flags": 513, "path": "/etc/passwd", "monoNs": 1100, "tgid": 100, "ppid": 10, "uid": 1000, "euid": 1000, "comm": "sh"}
+{"scenario": "open append only", "kind": "file", "action": "open-w", "flags": 1025, "path": "/var/log/app.log", "monoNs": 1200, "tgid": 100, "ppid": 10, "uid": 1000, "euid": 1000, "comm": "sh"}
+{"scenario": "unlink", "kind": "file", "action": "unlink", "path": "/etc/passwd", "monoNs": 1300, "tgid": 100, "ppid": 10, "uid": 1000, "euid": 1000, "comm": "rm"}
+{"scenario": "truncate", "kind": "file", "action": "truncate", "path": "/var/log/syslog", "monoNs": 1400, "tgid": 100, "ppid": 10, "uid": 0, "euid": 0, "comm": "logrotate"}
+{"scenario": "rename", "kind": "file", "action": "rename", "path": "/etc/hosts", "newPath": "/etc/hosts.bak", "monoNs": 1500, "tgid": 100, "ppid": 10, "uid": 0, "euid": 0, "comm": "mv"}
+{"scenario": "connect ipv4", "kind": "network.connection", "family": 2, "port": 443, "addr": "10.0.0.5", "monoNs": 2000, "tgid": 20531, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "curl"}
+{"scenario": "connect ipv6", "kind": "network.connection", "family": 10, "port": 443, "addrHex": "20010db8000000000000000000000001", "monoNs": 2100, "tgid": 20531, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "curl"}
+{"scenario": "connect unix", "kind": "network.connection", "family": 1, "addr": "/run/vigil.sock", "monoNs": 2200, "tgid": 20531, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "cli"}
+{"scenario": "connect unknown family", "kind": "network.connection", "family": 17, "monoNs": 2300, "tgid": 20531, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "cli"}
+{"scenario": "bind ipv4 any", "kind": "network.listen", "op": "bind", "family": 2, "port": 8080, "addr": "0.0.0.0", "monoNs": 3000, "tgid": 300, "ppid": 1, "uid": 1000, "euid": 1000, "comm": "server"}
+{"scenario": "listen ipv4 loopback", "kind": "network.listen", "op": "listen", "family": 2, "port": 9090, "addr": "127.0.0.1", "monoNs": 3100, "tgid": 300, "ppid": 1, "uid": 1000, "euid": 1000, "comm": "server"}
+{"scenario": "listen ipv6", "kind": "network.listen", "op": "listen", "family": 10, "port": 7070, "addrHex": "00000000000000000000000000000001", "monoNs": 3200, "tgid": 300, "ppid": 1, "uid": 1000, "euid": 1000, "comm": "server"}
+{"scenario": "capset to root", "kind": "privilege.change", "fromUid": 1000, "toUid": 0, "caps": "0x1ff", "src": "capset", "monoNs": 4000, "tgid": 20544, "ppid": 20510, "uid": 0, "euid": 0, "comm": "sudo"}
+{"scenario": "commit creds setuid", "kind": "privilege.change", "fromUid": 1000, "toUid": 0, "caps": "0x0", "src": "creds", "monoNs": 4100, "tgid": 20545, "ppid": 20510, "uid": 0, "euid": 0, "comm": "passwd"}
+{"scenario": "drop back to user", "kind": "privilege.change", "fromUid": 0, "toUid": 1000, "caps": "0x1ffffffffff", "src": "creds", "monoNs": 4200, "tgid": 20546, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "server"}
+{"scenario": "module load", "kind": "kernel.module", "op": "load", "module": "bpf_preload", "monoNs": 5000, "tgid": 1, "ppid": 0, "uid": 0, "euid": 0, "comm": "modprobe"}
+{"scenario": "module unload", "kind": "kernel.module", "op": "unload", "module": "old_drv", "monoNs": 5100, "tgid": 1, "ppid": 0, "uid": 0, "euid": 0, "comm": "modprobe"}

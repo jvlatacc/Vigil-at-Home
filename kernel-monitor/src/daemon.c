@@ -17,6 +17,7 @@
 
 #include <bpf/libbpf.h>
 
+#include "attach.h"
 #include "event.h"
 #include "feature_probe.h"
 #include "health.h"
@@ -110,6 +111,108 @@ static void usage(FILE *out)
 		" [--window-ms MS]\n");
 }
 
+/* Attach bookkeeping. Links must outlive main()'s loop, so they live in a
+ * pool; the kernel detaches everything when the process exits anyway. */
+#define VIG_LINKS_MAX 32
+#define VIG_HOOKS_MAX 32
+#define VIG_HOOK_NAME_MAX 56
+
+static struct bpf_link *g_links[VIG_LINKS_MAX];
+static size_t g_links_n;
+
+static bool attach_program(struct vigil_bpf *skel, const char *prog_name)
+{
+	struct bpf_program *p = bpf_object__find_program_by_name(skel->obj, prog_name);
+	struct bpf_link *l;
+
+	if (!p)
+		return false;
+	l = bpf_program__attach(p); /* attach type comes from the SEC name */
+	if (!l)
+		return false;
+	if (g_links_n < VIG_LINKS_MAX)
+		g_links[g_links_n++] = l;
+	else
+		bpf_link__destroy(l);
+	return true;
+}
+
+/* Hook naming for the health line, appended in attach order. */
+struct vig_hook_report {
+	char (*bufs)[VIG_HOOK_NAME_MAX];
+	const char **hooks;
+	size_t *n;
+	size_t max;
+};
+
+static void report_hook(struct vig_hook_report *r, const char *fmt, const char *a)
+{
+	if (*r->n >= r->max)
+		return;
+	snprintf(r->bufs[*r->n], VIG_HOOK_NAME_MAX, fmt, a);
+	r->hooks[*r->n] = r->bufs[*r->n];
+	(*r->n)++;
+}
+
+/* Attach one tracepoint program; false = the hook is missing and the
+ * monitor runs degraded. */
+static bool attach_tracepoint(struct vigil_bpf *skel, const char *prog_name,
+			      const char *label, struct vig_hook_report *r)
+{
+	if (!attach_program(skel, prog_name)) {
+		fprintf(stderr, "vigil-kernel-monitor: %s attach failed\n",
+			label);
+		return false;
+	}
+	report_hook(r, "%s", label);
+	return true;
+}
+
+/* What happened to one LSM-class hook. */
+enum vig_attach_out {
+	VIG_ATTACHED = 1,
+	VIG_ATTACH_MISSING, /* neither mechanism attached */
+	VIG_ATTACH_ABSENT,  /* hook not in this object (lands with its commit) */
+};
+
+/* Attach one LSM-class hook per the plan: the LSM program when planned and
+ * present, else its kprobe twin. The health line names the mechanism that
+ * actually serves the hook — "lsm/<hook>" or "kprobe/security_<hook>" — so
+ * a fallback entry names the missing LSM hook class by contrast. */
+static enum vig_attach_out attach_planned_hook(struct vigil_bpf *skel,
+					       const struct vig_hook_plan *h,
+					       struct vig_hook_report *r)
+{
+	char pname[64];
+	bool have_primary, have_fb;
+
+	snprintf(pname, sizeof pname, "vig_lsm_%s", h->hook);
+	have_primary = bpf_object__find_program_by_name(skel->obj, pname) != NULL;
+	snprintf(pname, sizeof pname, "vig_kp_%s", h->hook);
+	have_fb = bpf_object__find_program_by_name(skel->obj, pname) != NULL;
+
+	if (!have_primary && !have_fb)
+		return VIG_ATTACH_ABSENT;
+
+	snprintf(pname, sizeof pname, "vig_lsm_%s", h->hook);
+	if (h->mode == VIG_HOOK_LSM && have_primary &&
+	    attach_program(skel, pname)) {
+		report_hook(r, "lsm/%s", h->hook);
+		return VIG_ATTACHED;
+	}
+
+	snprintf(pname, sizeof pname, "vig_kp_%s", h->hook);
+	if (have_fb && attach_program(skel, pname)) {
+		report_hook(r, "kprobe/%s", h->fb_sym);
+		return VIG_ATTACHED;
+	}
+
+	fprintf(stderr, "vigil-kernel-monitor: hook %s: no mechanism attached\n",
+		h->hook);
+	report_hook(r, "missing/lsm/%s", h->hook);
+	return VIG_ATTACH_MISSING;
+}
+
 /* Emit the feature matrix as the startup monitor.health record. */
 static void emit_health(struct vig_pipeline *pipeline, size_t hooks_n,
 			const char *const *hooks, uint64_t dropped, bool degraded)
@@ -193,10 +296,12 @@ int main(int argc, char **argv)
 	}
 	vig_pipeline_set_emit(pipeline, on_emit, &ectx);
 
-	const char *hooks[16];
+	char hook_bufs[VIG_HOOKS_MAX][VIG_HOOK_NAME_MAX];
+	const char *hooks[VIG_HOOKS_MAX];
 	size_t hooks_n = 0;
-	char feat_btf[32], feat_lsm[48], feat_kpm[40], hook_exec[48],
-		hook_fork[48];
+	struct vig_hook_report report = { hook_bufs, hooks, &hooks_n,
+					  VIG_HOOKS_MAX };
+	char feat_btf[32], feat_lsm[48], feat_kpm[40];
 
 	snprintf(feat_btf, sizeof feat_btf, "feature/btf=%s",
 		 f.btf_present ? "yes" : "no");
@@ -204,9 +309,9 @@ int main(int argc, char **argv)
 		 f.lsm_prog_supported && f.lsm_bpf_active ? "yes" : "no");
 	snprintf(feat_kpm, sizeof feat_kpm, "feature/kprobe-multi=%s",
 		 f.kprobe_multi ? "yes" : "no");
-	hooks[hooks_n++] = feat_btf;
-	hooks[hooks_n++] = feat_lsm;
-	hooks[hooks_n++] = feat_kpm;
+	report_hook(&report, "%s", feat_btf);
+	report_hook(&report, "%s", feat_lsm);
+	report_hook(&report, "%s", feat_kpm);
 
 	/* BTF is the one non-negotiable: without it CO-RE cannot relocate and
 	 * a half-attached monitor would lie about what it saw. Refuse to run
@@ -234,19 +339,26 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
-	/* tracepoint programs auto-attach from their SEC names; failure marks
-	 * the monitor degraded — a missing hook is reported, never faked */
+	/* Explicit, plan-driven attach: the probe picked the mechanism per
+	 * hook; every attachment is named in the health line; a missing hook
+	 * is reported, never faked. LSM-class hooks land with their commits —
+	 * until then the plan finds no programs for them and skips them. */
 	bool degraded = false;
 
-	if (vigil_bpf__attach(skel) != 0) {
-		fprintf(stderr, "vigil-kernel-monitor: attach failed: %s\n",
-			strerror(errno));
-		degraded = true;
-	} else {
-		snprintf(hook_exec, sizeof hook_exec, "tracepoint/sched/sched_process_exec");
-		snprintf(hook_fork, sizeof hook_fork, "tracepoint/sched/sched_process_fork");
-		hooks[hooks_n++] = hook_exec;
-		hooks[hooks_n++] = hook_fork;
+	degraded |= !attach_tracepoint(skel, "on_exec",
+				       "tracepoint/sched/sched_process_exec",
+				       &report);
+	degraded |= !attach_tracepoint(skel, "on_fork",
+				       "tracepoint/sched/sched_process_fork",
+				       &report);
+
+	struct vig_attach_plan plan;
+
+	vig_attach_plan_build(f.lsm_prog_supported && f.lsm_bpf_active, &plan);
+	for (size_t i = 0; i < plan.hooks_n; i++) {
+		if (attach_planned_hook(skel, &plan.hooks[i], &report) ==
+		    VIG_ATTACH_MISSING)
+			degraded = true;
 	}
 
 	struct ring_buffer *rb =
