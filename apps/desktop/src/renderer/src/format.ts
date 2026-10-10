@@ -135,6 +135,8 @@ export function describeEvent(e: SensorEvent): string {
         xprotect_detected: 'XProtect found malware',
         tcc_modified: 'Privacy permission changed',
         gatekeeper_override: 'Gatekeeper was overridden',
+        relay_revoked: 'Telemetry relay revoked this device',
+        relay_gap: 'Telemetry relay copy has a gap',
       }[e.subtype];
     case 'agent.tool_request':
       // `#socket` is Vigil's own stand-in, on the alert it raises when its agent socket is taken.

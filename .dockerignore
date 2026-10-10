@@ -1,0 +1,9 @@
+# Docker build context for apps/relay (context = repository root).
+# Keeps the image build from copying local state it never needs.
+**/node_modules
+**/build
+**/dist
+**/out
+.git
+.github
+*.log

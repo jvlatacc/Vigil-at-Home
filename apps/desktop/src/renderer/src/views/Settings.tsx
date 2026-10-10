@@ -8,6 +8,7 @@ import { aboutText, systemName } from './about';
 import { AiSection } from './Ai';
 import { AppearanceSection } from './Appearance';
 import { ThreatFeedsSection } from './ThreatFeeds';
+import { RelaySection } from './Relay';
 import { UpdatesRow } from './Updates';
 import { ADVANCED_NAV, PageHead } from './AppShell';
 import { SetupPanel } from './onboarding/SetupPanel';
@@ -49,6 +50,9 @@ export function SettingsView({ go }: { go: (r: string) => void }) {
         </Card>
       )}
       <SetupPanel />
+      <Card>
+        <RelaySection />
+      </Card>
       <Card>
         <SectionHead
           title="About"

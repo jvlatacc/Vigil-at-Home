@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { app, dialog, Notification, powerMonitor, safeStorage, shell } from 'electron';
 import { z } from 'zod';
 import type { HelperInstallResult } from '../shared/ipc.js';
 import { AgentService } from './agents/service.js';
 import { AiBridge } from './ai.js';
+import { openPrivateDatabase } from './db/private-db.js';
 import { Store } from './db/store.js';
 import { demoInstalled, seedAgentsDemo, seedDemo, startDemoFeed } from './demo.js';
 import { seedUsageDemo } from './usage-demo.js';
@@ -23,6 +23,8 @@ import { registerIpc } from './ipc.js';
 import { systemProbe } from './onboarding/checks.js';
 import { demoProbe } from './onboarding/demo.js';
 import { FeedKeyStore, KeyStore, type Cipher } from './onboarding/keys.js';
+import { RelayTokenStore } from './relay/secrets.js';
+import { RelayService } from './relay/service.js';
 import { linuxDistro, type LinuxDistro } from './onboarding/plan.js';
 import { OnboardingService } from './onboarding/service.js';
 import { Connectors, ConnectorRecord } from './pack/connectors.js';
@@ -90,14 +92,19 @@ function failedToStart(err: unknown): void {
   app.exit(1);
 }
 
+/** A non-negative number from the environment, or the fallback when unset or malformed. */
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 function start(): void {
   // Menu-bar app: no Dock icon until the main window opens.
   app.dock?.hide();
   restrictWebContents();
 
   const dataDir = app.getPath('userData');
-  mkdirSync(dataDir, { recursive: true });
-  const db = new DatabaseSync(join(dataDir, 'vigil.db'));
+  const db = openPrivateDatabase(dataDir);
   const store = new Store(db);
 
   // Actions go to the privileged helper. Until it is installed and answering,
@@ -122,7 +129,14 @@ function start(): void {
     selfPaths: self.app,
     helperSelf: self.helper,
     // URLhaus and MalwareBazaar send the user's abuse.ch key once they add one.
-    feeds: { keys: (name) => feedKeys.get(name) },
+    // Brand-new feed entries wait out a confirm window before they can enforce
+    // anything (a tampered feed cannot steer containment on day zero), and
+    // unusually fast list growth is flagged. Both knobs stay overridable.
+    feeds: {
+      keys: (name) => feedKeys.get(name),
+      confirmWindowMs: envNumber('FEED_CONFIRM_WINDOW_MS', 86_400_000),
+      maxGrowthRatio: envNumber('GROWTH_ALERT_RATIO', 1),
+    },
     // What Vigil itself starts (its AI helpers) is tagged vigil-self, never a watched agent.
     selfPid: process.pid,
     // The tracker reports to the agent service, created just below.
@@ -353,12 +367,33 @@ function start(): void {
     seedPackDemo(pack, connectors, join(app.getAppPath(), 'src/main/pack/fixtures/demo-mcp.mjs'));
   app.on('before-quit', () => void connectors.closeAll());
 
-  registerIpc(core, windows, setup, ai, updates, agents, { service: pack, connectors }, feedKeys, {
-    install: installHelper,
-    uninstall: unlessDemo(demo, async () =>
-      afterHelperScript(await runHelperScript('uninstall', helperDir())),
-    ),
+  const relayTokens = new RelayTokenStore(join(dataDir, 'relay-token.json'), cipher);
+  const relay = new RelayService({
+    store,
+    alerts: core.alerts,
+    getDetector: () => core.detector,
+    tokens: relayTokens,
+    log: (msg) => console.error('[relay]', msg),
   });
+  relay.start();
+
+  registerIpc(
+    core,
+    windows,
+    setup,
+    ai,
+    updates,
+    agents,
+    { service: pack, connectors },
+    feedKeys,
+    relay,
+    {
+      install: installHelper,
+      uninstall: unlessDemo(demo, async () =>
+        afterHelperScript(await runHelperScript('uninstall', helperDir())),
+      ),
+    },
+  );
   windows.createTray();
   windows.applyTheme(core.theme(), core.appearance());
   // After start-up settles, so the menu-bar item appears first.
@@ -372,6 +407,7 @@ function start(): void {
   core.sensors.on('changed', refresh);
   setup.on('changed', () => windows.broadcast('changed'));
   agents.on('changed', () => windows.broadcast('changed'));
+  relay.on('changed', () => windows.broadcast('changed'));
   agents.on('activity', () => windows.broadcast('agents'));
   core.alerts.on('popup', (alert) => windows.showPopup(alert.id));
   core.feed.on('events', (n) => windows.broadcast('events', n));
@@ -456,6 +492,7 @@ function start(): void {
   // Keep running in the menu bar when windows close.
   app.on('window-all-closed', () => {});
   app.on('before-quit', () => {
+    relay.stop();
     helper.stop();
     void agents.stop();
     core.stop();

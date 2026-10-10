@@ -77,6 +77,11 @@ The DMG, the .deb and the AppImage bundle these, each under its own license:
 | [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)                            | Proprietary: © Anthropic PBC, use subject to Anthropic's legal agreements (https://code.claude.com/docs/en/legal-and-compliance). Not open source and not covered by Vigil's Apache License. |
 | Other npm packages bundled into the app (React, lucide-react, zod, the MCP SDK, ajv and their dependencies) | MIT, ISC or BSD-3-Clause; each one's name, version and full license text is in the app's `licenses` folder (`Contents/Resources/licenses` on a Mac, `resources/licenses` on Linux)           |
 
+The appliance collector (`apps/appliance/`) is built and shipped separately from the
+desktop app (see `docs/appliance.md` when it lands). Its image bundles
+[zod](https://github.com/colinhacks/zod) and
+[aws4fetch](https://github.com/mhart/aws4fetch), each used under the MIT License.
+
 ## Installed separately, not shipped
 
 Vigil talks to these but does not bundle them. You install them yourself, under their own terms.
@@ -192,6 +197,56 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
+
+## Appliance image components
+
+The appliance VM image (`apps/appliance/packer`) is built from, and ships,
+the following third-party software.
+
+### Debian 12 cloud image
+
+The image's base disk is the official Debian 12 (bookworm) "genericcloud"
+cloud image from [cloud.debian.org](https://cloud.debian.org/images/cloud/),
+pinned by SHA-512 in `apps/appliance/packer/appliance.pkr.hcl`. It contains
+the Debian operating system, whose packages carry their own licenses (see
+`/usr/share/doc/*/copyright` inside the image and the
+[Debian legal pages](https://www.debian.org/legal/)).
+
+### Node.js
+
+The image ships the official Node.js 22 runtime binary from
+[nodejs.org](https://nodejs.org), checksum-pinned in
+`apps/appliance/packer/provision/node.sh`.
+
+```
+MIT License
+
+Copyright Node.js contributors. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### Packer
+
+Image builds run HashiCorp [Packer](https://www.packer.io), used under the
+MPL-2.0 license. Packer is build tooling only: it runs on the build machine
+and is not distributed in the image or the release artifacts.
 
 ## Original artwork
 

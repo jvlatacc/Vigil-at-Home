@@ -14,6 +14,14 @@ name: Release
 #   CSC_LINK, CSC_KEY_PASSWORD        Developer ID Application certificate (.p12, base64) and password
 #   APPLE_API_KEY                     App Store Connect API key (.p8 contents)
 #   APPLE_API_KEY_ID, APPLE_API_ISSUER
+#
+# The checksums can be signed too (audit REL-01). With the repository secret
+# VIGIL_RELEASE_SIGNING_KEY (an ed25519 private key made by
+# scripts/release/generate-signing-key.mjs), the release job signs
+# SHA256SUMS.txt into SHA256SUMS.txt.minisig, which the app verifies before
+# offering an update. Without the secret the sums ship unsigned and the app
+# stays fail-open (logged). test_sign signs with the committed dogfood key
+# instead — pipeline proof only, never a real release.
 
 on:
   workflow_dispatch:
@@ -21,6 +29,11 @@ on:
       version:
         description: Version to release, like 0.1.0 or 0.1.0-alpha.1 (leave empty to only build)
         required: false
+      test_sign:
+        description: Sign checksums with the committed dogfood test key (proof-of-plumbing only)
+        type: boolean
+        required: false
+        default: false
   # Also check packaging whenever the packaging setup changes.
   pull_request:
     paths:
@@ -48,11 +61,11 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -133,7 +146,7 @@ jobs:
             echo "The app reported a startup error"; exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vigil-at-home-mac
           path: |
@@ -143,11 +156,11 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -157,8 +170,13 @@ jobs:
         env:
           INPUT: ${{ inputs.version }}
         working-directory: apps/desktop
+        # Same format check as the mac job, so a malformed version fails both
+        # builds before any packaging happens.
         run: |
           v="${INPUT#v}"
+          if [[ -n "$v" && ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Not a version: $v" >&2; exit 1
+          fi
           if [[ -n "$v" ]]; then npm pkg set version="$v"; fi
 
       - name: Build and package
@@ -206,7 +224,7 @@ jobs:
         if: always()
         run: sudo sh "/opt/Vigil at Home/resources/helper/linux/uninstall.sh" || true
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vigil-at-home-linux
           path: |
@@ -221,14 +239,53 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: dist
           merge-multiple: true
+      # Verifiable build provenance for everything the release ships — extra
+      # weight while releases are unsigned (audit REL-01). Runs before the
+      # draft so the attestations exist even if the draft step fails.
+      - name: Attest the artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.deb
+            dist/*.AppImage
+      # REL-01: sign the checksums when the signing key is available, so the
+      # app can verify a release before offering it.
+      - name: Checksum and sign the artifacts
+        env:
+          VIGIL_RELEASE_SIGNING_KEY: ${{ secrets.VIGIL_RELEASE_SIGNING_KEY }}
+          TEST_SIGN: ${{ inputs.test_sign }}
+        run: |
+          (cd dist && sha256sum *.dmg *.zip *.deb *.AppImage > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+          key=""
+          if [[ -n "$VIGIL_RELEASE_SIGNING_KEY" ]]; then
+            key="$RUNNER_TEMP/release-signing-key.pem"
+            printf '%s' "$VIGIL_RELEASE_SIGNING_KEY" > "$key"
+            chmod 600 "$key"
+            echo "Signing SHA256SUMS.txt with the VIGIL_RELEASE_SIGNING_KEY secret."
+          elif [[ "$TEST_SIGN" == "true" ]]; then
+            key=scripts/release/dogfood-signing-key.b64
+            echo "::warning::Signing SHA256SUMS.txt with the committed dogfood test key — this proves the pipeline only, and anyone can reproduce the signature. Never use it for a real release."
+          else
+            echo "::notice::No VIGIL_RELEASE_SIGNING_KEY secret: SHA256SUMS.txt ships unsigned. The app logs and still offers unsigned releases (fail-open) until the key is provisioned — see scripts/release/README.md."
+          fi
+          if [[ -n "$key" ]]; then
+            node scripts/release/sign-checksums.mjs --sums dist/SHA256SUMS.txt --key "$key"
+            cat dist/SHA256SUMS.txt.minisig
+          fi
+
       - name: Draft a GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -240,9 +297,9 @@ jobs:
             echo "::notice::A release for v$VERSION already exists, so no new draft was made."
             exit 0
           fi
-          (cd dist && sha256sum *.dmg *.zip *.deb *.AppImage > SHA256SUMS.txt)
-          cat dist/SHA256SUMS.txt
+          # Sums (and their .minisig, when signed) were made by the previous step.
           flags=(--draft --target "$GITHUB_SHA" --title "Vigil at Home $VERSION" --notes-file .github/release-notes.md)
           [[ "$VERSION" == *-* ]] && flags+=(--prerelease)
-          gh release create "v$VERSION" "${flags[@]}" dist/*.dmg dist/*.zip dist/*.deb dist/*.AppImage \
-            dist/SHA256SUMS.txt
+          assets=(dist/*.dmg dist/*.zip dist/*.deb dist/*.AppImage dist/SHA256SUMS.txt)
+          [[ -f dist/SHA256SUMS.txt.minisig ]] && assets+=(dist/SHA256SUMS.txt.minisig)
+          gh release create "v$VERSION" "${flags[@]}" "${assets[@]}"

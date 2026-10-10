@@ -10,8 +10,9 @@ import {
  * secrets hide in them in too many shapes (`mysql -phunter2`, quoted
  * `PGPASSWORD=…`, a value after `;` or a newline) for a pattern to cut out
  * the secret and nothing else. A command-line field that might hold one is
- * withheld whole, and otherwise only this computer's user and host names are
- * replaced. Every other string, a decision note or an error included, is
+ * withheld whole, and otherwise only emails and this computer's user and
+ * host names are replaced. Every other string, a decision note or an error
+ * included, is
  * treated the same way, since any of them can quote a command. Only titles
  * are rule text and skip the scan. The
  * shared redaction (@vigil/ai/redact) only adds to the scan: a string it
@@ -140,12 +141,23 @@ function escapeRegExp(text: string): string {
 }
 
 /**
- * Home folder names (`/Users/<name>/`, whoever's), then this computer's
- * names as whole tokens: any character other than a letter
- * or digit ends one, so `al_backup`, `my-pc` and `<al;` give the name away
- * and `alpha` doesn't. One pass, and only the name's own characters change.
+ * An email address, by the rule @vigil/ai/redact's own name pass reads one,
+ * replaced with the same `<email>` marker its model path writes. It goes
+ * before the rules below: an email can hold this computer's names, which
+ * they would only half-hide (`john.doe@…` keeps `doe@…` when just the
+ * user name inside it changes).
+ */
+const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,63}/g;
+
+/**
+ * An email address, then home folder names (`/Users/<name>/`, whoever's),
+ * then this computer's names as whole tokens: any character other than a
+ * letter or digit ends one, so `al_backup`, `my-pc` and `<al;` give the name
+ * away and `alpha` doesn't. One pass, and only a name's own characters
+ * change.
  */
 function redactNames(text: string, names: EvidenceNames): string {
+  if (text.includes('@')) text = text.replace(EMAIL, '<email>');
   // Any user's home folder name, up to the next / or the end of the path.
   text = text.replace(/(\/(?:Users|home)\/)[A-Za-z0-9._-]+(?=\/|$|\s|['"])/g, '$1<user>');
   const host = names.hostname?.replace(/\.local$/i, '');

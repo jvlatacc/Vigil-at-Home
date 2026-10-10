@@ -1,0 +1,28 @@
+{
+  "name": "@vigil/relay",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Store-and-forward telemetry relay between Vigil at Home laptops and the Vigil SOC: authenticated ingest, retention, and the SOC's read-only MCP face",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node scripts/build.mjs",
+    "start": "node build/relay.mjs serve"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "@vigil/ai": "workspace:*",
+    "@vigil/core": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "@vigil/ai": "workspace:*",
+    "@vigil/shipper": "workspace:*",
+    "esbuild": "^0.28.2"
+  }
+}

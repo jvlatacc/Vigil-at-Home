@@ -17,6 +17,10 @@ AuthKey_*
 
 e2e-results/
 /apps/desktop/build/
+/apps/relay/build/
 perf-results/
 agents-results/
 bench-results/
+
+# Appliance image build output
+apps/appliance/packer/output/

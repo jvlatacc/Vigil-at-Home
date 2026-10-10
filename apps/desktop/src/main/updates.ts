@@ -1,10 +1,24 @@
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import type { UpdateView } from '../shared/updates.js';
+import { MINISIG_NAME, SUMS_NAME, verifySumsSignature } from './release-signing.js';
 
 /** Where releases are published. Only published releases are visible; drafts never are. */
-export const RELEASES_URL =
-  'https://api.github.com/repos/ShmalexM/Vigil-at-Home/releases?per_page=30';
+export function releasesUrl(repo: string): string {
+  return `https://api.github.com/repos/${repo}/releases?per_page=30`;
+}
+
+/**
+ * The repo this build checks for updates, named by build configuration
+ * (electron.vite.config.ts; see update-repo.ts). Undefined in fork builds,
+ * which ship with update checks off — upstream releases are not updates for
+ * them (audit INFO-2).
+ */
+export const UPDATE_REPO: string | undefined =
+  typeof __VIGIL_UPDATE_REPO__ === 'string' && __VIGIL_UPDATE_REPO__
+    ? __VIGIL_UPDATE_REPO__
+    : undefined;
+
 /** Wait a little after start, then check a few times a day. */
 export const FIRST_CHECK_MS = 60_000;
 export const CHECK_EVERY_MS = 6 * 60 * 60_000;
@@ -20,6 +34,7 @@ const Release = z.object({
     .default([]),
 });
 const Releases = z.array(z.unknown());
+type ReleaseAssets = z.infer<typeof Release>['assets'];
 
 const Saved = z.object({
   auto: z.boolean().default(true),
@@ -37,9 +52,16 @@ export interface UpdateOptions {
    * offered to an x64 Linux machine. Elsewhere the release page opens instead.
    */
   platform?: NodeJS.Platform;
+  /**
+   * Where to check for releases: build configuration's choice by default
+   * (left undefined), or an explicit repo. Null turns checks off.
+   */
+  repo?: string | null;
   load: () => unknown;
   save: (s: Saved) => void;
   fetch?: typeof fetch;
+  /** The release signing key to verify against; defaults to the committed RELEASE_SIGNING_PUBLIC_KEY. */
+  signingPublicKey?: string;
   openExternal: (url: string) => Promise<void>;
   /** Told once per version when a newer release turns up. */
   onFound?: (version: string) => void;
@@ -67,6 +89,11 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
     return r.success ? r.data : { auto: true };
   }
 
+  /** The update source: the caller's choice, else build configuration's. */
+  private updateRepo(): string | null | undefined {
+    return this.o.repo === undefined ? UPDATE_REPO : this.o.repo;
+  }
+
   view(): UpdateView {
     const s = this.saved();
     return {
@@ -82,6 +109,7 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
 
   /** Starts the automatic checks. */
   start(): void {
+    if (!this.updateRepo()) return; // A fork build has no update source to ask.
     const tick = () => {
       if (this.saved().auto) void this.check();
     };
@@ -95,22 +123,45 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
   }
 
   async check(): Promise<UpdateView> {
-    if (this.checking) return this.view();
+    const repo = this.updateRepo();
+    if (this.checking || !repo) return this.view(); // Fork build: nothing to ask.
     this.checking = true;
     this.emit('changed');
     try {
-      const res = await (this.o.fetch ?? fetch)(RELEASES_URL, {
+      const res = await (this.o.fetch ?? fetch)(releasesUrl(repo), {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Vigil-at-Home' },
         signal: AbortSignal.timeout(20_000),
       });
       if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
-      this.available = newest(
+      const found = newestRelease(
         Releases.parse(await res.json()),
         this.o.current,
         this.o.arch,
+        repo,
         this.o.platform,
       );
-      this.error = undefined;
+      if (!found) {
+        this.available = undefined;
+        this.error = undefined;
+      } else {
+        // REL-01: nothing is offered before its checksums verify. Unsigned
+        // releases stay fail-open, logged, until the signing key ships.
+        const verdict = await this.verifyAssets(found.assets, repo);
+        if (verdict.outcome === 'refused') {
+          console.warn(`[updates] ${verdict.reason}`);
+          this.available = undefined;
+          this.error = verdict.reason;
+        } else {
+          if (verdict.outcome === 'unsigned') {
+            console.warn(
+              `[updates] ${found.available.version} has no ${MINISIG_NAME}: offering it anyway ` +
+                '(fail-open until the release signing key is provisioned).',
+            );
+          }
+          this.available = found.available;
+          this.error = undefined;
+        }
+      }
       const v = this.available?.version;
       if (v && !this.told.has(v) && this.saved().dismissed !== v) {
         this.told.add(v);
@@ -124,6 +175,65 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
       this.emit('changed');
     }
     return this.view();
+  }
+
+  /**
+   * What the release's signature assets decided. 'ok' — the checksums are
+   * signed and verify; 'unsigned' — no .minisig asset (historical releases,
+   * or the signing key isn't provisioned yet); 'refused' — the release claims
+   * a signature but it doesn't check out, and the update is not offered.
+   */
+  private async verifyAssets(assets: ReleaseAssets, repo: string): Promise<SignatureVerdict> {
+    const sig = assets.find((a) => a.name === MINISIG_NAME);
+    if (!sig) return { outcome: 'unsigned' };
+    const sums = assets.find((a) => a.name === SUMS_NAME);
+    if (!sums) {
+      return {
+        outcome: 'refused',
+        reason: `Update not offered: it has ${MINISIG_NAME} but no ${SUMS_NAME}.`,
+      };
+    }
+    if (!isGitHub(sums.browser_download_url, repo) || !isGitHub(sig.browser_download_url, repo)) {
+      return {
+        outcome: 'refused',
+        reason: `Update not offered: its ${SUMS_NAME} is not on the allowlisted github.com release URL.`,
+      };
+    }
+    try {
+      const f = this.o.fetch ?? fetch;
+      const headers = { Accept: 'application/octet-stream', 'User-Agent': 'Vigil-at-Home' };
+      const [sumsRes, sigRes] = await Promise.all([
+        f(sums.browser_download_url, { headers, signal: AbortSignal.timeout(20_000) }),
+        f(sig.browser_download_url, { headers, signal: AbortSignal.timeout(20_000) }),
+      ]);
+      if (!sumsRes.ok || !sigRes.ok) {
+        return {
+          outcome: 'refused',
+          reason:
+            `Update not offered: downloading ${SUMS_NAME} to verify answered ` +
+            `${!sumsRes.ok ? sumsRes.status : sigRes.status}.`,
+        };
+      }
+      const ok = verifySumsSignature(
+        await sumsRes.text(),
+        await sigRes.text(),
+        this.o.signingPublicKey,
+      );
+      if (ok) return { outcome: 'ok' };
+      return {
+        outcome: 'refused',
+        reason:
+          `Update not offered: the signature over ${SUMS_NAME} does not verify ` +
+          'against the committed release key.',
+      };
+    } catch (err) {
+      return {
+        outcome: 'refused',
+        reason:
+          `Update not offered: could not download ${SUMS_NAME} to verify ` +
+          `(${err instanceof Error ? err.message : String(err)}).`,
+      };
+    }
   }
 
   setAuto(auto: boolean): void {
@@ -151,17 +261,23 @@ export class UpdateChecker extends EventEmitter<{ changed: [] }> {
   }
 }
 
+type SignatureVerdict =
+  { outcome: 'ok' } | { outcome: 'unsigned' } | { outcome: 'refused'; reason: string };
+
 /**
- * The newest release newer than `current`, or undefined. Pre-releases count on
- * a pre-release, and on any build while no full release has been published yet
- * (every Vigil release so far is an alpha, and local builds say 0.0.1).
+ * The newest release newer than `current`, with the release's own asset list
+ * so the caller can verify its checksum signature before offering it.
+ * Pre-releases count on a pre-release, and on any build while no full release
+ * has been published yet (every Vigil release so far is an alpha, and local
+ * builds say 0.0.1).
  */
-export function newest(
+function newestRelease(
   raw: unknown[],
   current: string,
   arch: string,
+  repo: string,
   platform: NodeJS.Platform = 'darwin',
-): UpdateView['available'] | undefined {
+): { available: NonNullable<UpdateView['available']>; assets: ReleaseAssets } | undefined {
   const releases = raw.flatMap((item) => {
     const p = Release.safeParse(item);
     return p.success && !p.data.draft ? [p.data] : [];
@@ -173,7 +289,7 @@ export function newest(
   for (const r of releases) {
     if (r.prerelease && !takePre) continue;
     const version = r.tag_name.replace(/^v/, '');
-    if (!parseVersion(version) || !isGitHub(r.html_url)) continue;
+    if (!parseVersion(version) || !isGitHub(r.html_url, repo)) continue;
     if (compareVersions(version, current) <= 0) continue;
     // A release with nothing to install on this Linux machine isn't an update for it.
     if (platform === 'linux' && !r.assets.some((a) => isLinuxPackage(a.name, arch))) continue;
@@ -183,15 +299,29 @@ export function newest(
   const dmg =
     platform === 'darwin'
       ? best.r.assets.find(
-          (a) => a.name.endsWith(`-${arch}.dmg`) && isGitHub(a.browser_download_url),
+          (a) => a.name.endsWith(`-${arch}.dmg`) && isGitHub(a.browser_download_url, repo),
         )
       : undefined;
   return {
-    version: best.version,
-    notesUrl: best.r.html_url,
-    ...(dmg ? { downloadUrl: dmg.browser_download_url } : {}),
-    ...(best.r.published_at ? { publishedAt: best.r.published_at } : {}),
+    available: {
+      version: best.version,
+      notesUrl: best.r.html_url,
+      ...(dmg ? { downloadUrl: dmg.browser_download_url } : {}),
+      ...(best.r.published_at ? { publishedAt: best.r.published_at } : {}),
+    },
+    assets: best.r.assets,
   };
+}
+
+/** The newest release newer than `current`, or undefined. */
+export function newest(
+  raw: unknown[],
+  current: string,
+  arch: string,
+  repo: string,
+  platform: NodeJS.Platform = 'darwin',
+): UpdateView['available'] | undefined {
+  return newestRelease(raw, current, arch, repo, platform)?.available;
 }
 
 /**
@@ -204,14 +334,14 @@ export function isLinuxPackage(name: string, arch: string): boolean {
   return tags.some((t) => name.endsWith(`-${t}`));
 }
 
-/** Only ever open links to this project's own pages on github.com. */
-function isGitHub(url: string): boolean {
+/** Only ever open links to the update repo's own pages on github.com. */
+function isGitHub(url: string, repo: string): boolean {
   try {
     const u = new URL(url);
     return (
       u.protocol === 'https:' &&
       u.hostname === 'github.com' &&
-      u.pathname.toLowerCase().startsWith('/shmalexm/vigil-at-home/')
+      u.pathname.toLowerCase().startsWith(`/${repo.toLowerCase()}/`)
     );
   } catch {
     return false;

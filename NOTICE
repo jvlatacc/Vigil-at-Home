@@ -21,5 +21,15 @@ Apache License, Version 2.0.
 The Claude Agent SDK bundled in the app is Anthropic's proprietary software,
 used under Anthropic's terms, and is not covered by the Apache License.
 
+The appliance collector (apps/appliance/) bundles zod
+(https://github.com/colinhacks/zod) and aws4fetch
+(https://github.com/mhart/aws4fetch), each used under the MIT License.
+
+The appliance VM image (apps/appliance/packer) is built from the official
+Debian 12 "genericcloud" cloud image (https://cloud.debian.org/images/cloud/),
+provided by the Debian Project under its constituent package licenses. Image
+builds use HashiCorp Packer (https://www.packer.io), used under the MPL-2.0
+license; Packer is build tooling and is not distributed with the image.
+
 See THIRD_PARTY_NOTICES.md for the full license texts and for the third-party
 software bundled with or used by the app.
