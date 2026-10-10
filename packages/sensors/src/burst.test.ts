@@ -141,6 +141,7 @@ describe('SensorHub with a closer look', () => {
     const hub = new SensorHub({
       santaLogPath: false,
       osqueryResultsPath: false,
+      kernelMonitorPath: false,
       sink: (e) => out.push(e),
       osqueryRunner: async () => [row(800)],
     });

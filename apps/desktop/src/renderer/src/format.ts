@@ -140,6 +140,13 @@ export function describeEvent(e: SensorEvent): string {
       // `#socket` is Vigil's own stand-in, on the alert it raises when its agent socket is taken.
       if (e.tool === '#socket') return 'Another program took Vigil’s agent socket';
       return `${{ 'claude-code': 'Claude Code' }[e.agent.host]} asked to use ${e.tool}`;
+    // Kernel-monitor events (Linux): tgid/uid/comm, no process ref.
+    case 'privilege.change':
+      return `Privilege change: uid ${e.fromUid} to ${e.toUid} by ${e.comm}`;
+    case 'kernel.module':
+      return `Kernel module ${e.op === 'load' ? 'loaded' : 'unloaded'}: ${e.module}`;
+    case 'monitor.health':
+      return e.degraded ? 'Kernel monitor degraded' : 'Kernel monitor health';
   }
 }
 

@@ -168,6 +168,17 @@ export function eventLine(e: SensorEvent): string {
       return `${e.agent.host} asked to run ${e.tool}${e.command ? ` ${e.command.slice(0, 300)}` : ''}${
         e.filePath ? ` on ${e.filePath}` : ''
       }${e.url ? ` ${e.url}` : ''}`;
+    // Kernel-monitor events (Linux): tgid/uid/comm, no process ref.
+    case 'privilege.change':
+      return `privilege change uid ${e.fromUid} -> ${e.toUid}${
+        e.caps?.length ? ` caps=${e.caps.slice(0, 8).join(',')}` : ''
+      } by ${e.comm}`;
+    case 'kernel.module':
+      return `kernel module ${e.op} ${e.module} by ${e.comm}`;
+    case 'monitor.health':
+      return `monitor health dropped=${e.droppedTotal} hooks=${e.hooks.length}${
+        e.degraded ? ' degraded' : ''
+      }`;
   }
 }
 
