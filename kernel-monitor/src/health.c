@@ -45,3 +45,24 @@ int vig_health_event(struct vig_event *out, uint64_t mono_ns,
 		return -1;
 	return 0;
 }
+
+int vig_health_dropped_total(const struct vig_event *e, uint64_t *out)
+{
+	/* the fragment always begins "droppedTotal":N,... (writer above) */
+	static const char prefix[] = "\"droppedTotal\":";
+	const uint8_t *p;
+
+	if (memcmp(e->payload, prefix, sizeof prefix - 1) != 0)
+		return -1;
+	p = e->payload + sizeof prefix - 1;
+	if (*p < '0' || *p > '9')
+		return -1;
+	uint64_t v = 0;
+
+	while (*p >= '0' && *p <= '9') {
+		v = v * 10 + (uint64_t)(*p - '0');
+		p++;
+	}
+	*out = v;
+	return 0;
+}

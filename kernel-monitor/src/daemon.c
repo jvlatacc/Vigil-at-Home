@@ -3,9 +3,9 @@
  * Loads the CO-RE eBPF object, consumes the ring buffer, reorders events on
  * their monotonic stamp inside a 100 ms window, anchors them to wall-clock
  * time, appends the JSONL operations index, and emits each record as an RFC
- * 5424 VIGOP message to /dev/log — rsyslog owns delivery from there. Rule
- * evaluation and VIGALERT messages land with the rules PR; the core emits
- * VIGOP only. */
+ * 5424 VIGOP message to /dev/log — rsyslog owns delivery from there. A fixed
+ * rule evaluator runs over the ordered stream and raises matching records as
+ * RFC 5424 VIGALERT messages; it never blocks or enforces anything. */
 #include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -23,6 +23,7 @@
 #include "health.h"
 #include "index.h"
 #include "pipeline.h"
+#include "rules.h"
 #include "syslog_emit.h"
 #include "util.h"
 
@@ -31,6 +32,8 @@
 #define VIG_HEALTH_TICK_S 10
 #define VIG_HEALTH_HEARTBEAT_S 60
 #define VIG_DROP_ALERT_DELTA 1000
+#define VIG_RULES_DIR_DEFAULT "/etc/vigil/kernel-monitor/rules"
+#define VIG_RULE_MATCHES_MAX 16
 
 static volatile sig_atomic_t g_stop;
 
@@ -61,6 +64,7 @@ static struct timespec real_now_wall(void *ctx)
 struct emit_ctx {
 	struct vig_index *index;
 	struct vig_syslog *slog;
+	struct vig_rules *rules;
 	const char *hostname;
 };
 
@@ -79,6 +83,21 @@ static void on_emit(void *user, const struct vig_event *e,
 			strerror(errno));
 	vig_syslog_emit(c->slog, VIG_SYSLOG_PRI_OP, VIG_SYSLOG_MSGID_OP, e,
 			wall, c->hostname);
+
+	/* Deterministic and observability-only: the evaluator flags and
+	 * emits, nothing here blocks or enforces. */
+	struct vig_rule_match matches[VIG_RULE_MATCHES_MAX];
+	size_t n = vig_rules_evaluate(c->rules, e, matches,
+				      VIG_RULE_MATCHES_MAX);
+
+	for (size_t i = 0; i < n && i < VIG_RULE_MATCHES_MAX; i++) {
+		int pri = vig_syslog_alert_pri(matches[i].severity);
+
+		if (pri >= 0)
+			vig_syslog_alert(c->slog, pri, matches[i].rule,
+					 matches[i].severity, e, wall,
+					 c->hostname);
+	}
 }
 
 static int on_ring(void *user, void *data, size_t len)
@@ -108,7 +127,7 @@ static void usage(FILE *out)
 {
 	fprintf(out,
 		"usage: vigil-kernel-monitor [--index-dir DIR] [--syslog-path PATH]"
-		" [--window-ms MS]\n");
+		" [--rules-dir DIR] [--window-ms MS]\n");
 }
 
 /* Attach bookkeeping. Links must outlive main()'s loop, so they live in a
@@ -229,6 +248,7 @@ int main(int argc, char **argv)
 {
 	const char *index_dir = VIG_INDEX_DIR_DEFAULT;
 	const char *syslog_path = "/dev/log";
+	const char *rules_dir = VIG_RULES_DIR_DEFAULT;
 	uint64_t window_ms = VIG_REORDER_WINDOW_MS;
 
 	for (int i = 1; i < argc; i++) {
@@ -236,6 +256,8 @@ int main(int argc, char **argv)
 			index_dir = argv[++i];
 		} else if (!strcmp(argv[i], "--syslog-path") && i + 1 < argc) {
 			syslog_path = argv[++i];
+		} else if (!strcmp(argv[i], "--rules-dir") && i + 1 < argc) {
+			rules_dir = argv[++i];
 		} else if (!strcmp(argv[i], "--window-ms") && i + 1 < argc) {
 			window_ms = strtoull(argv[++i], NULL, 10);
 		} else if (!strcmp(argv[i], "--help")) {
@@ -277,12 +299,29 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	struct vig_rules *rules;
+	{
+		char err[256];
+
+		rules = vig_rules_load(rules_dir, err, sizeof err);
+		if (!rules) {
+			/* fail loudly at load: a monitor that silently ran
+			 * with no rules would alert on nothing */
+			fprintf(stderr, "vigil-kernel-monitor: %s\n", err);
+			vig_index_close(index);
+			return 1;
+		}
+		fprintf(stderr, "vigil-kernel-monitor: %zu rules loaded from %s\n",
+			vig_rules_count(rules), rules_dir);
+	}
+
 	char hostname[256];
 
 	if (gethostname(hostname, sizeof hostname) != 0)
 		strcpy(hostname, "localhost");
 
-	struct emit_ctx ectx = { index, vig_syslog_open(syslog_path), hostname };
+	struct emit_ctx ectx = { index, vig_syslog_open(syslog_path), rules,
+				 hostname };
 	struct vig_clocks clocks = { real_now_mono_ns, real_now_wall, NULL };
 	struct vig_pipeline *pipeline =
 		vig_pipeline_create(&clocks, window_ms * 1000000ULL);
@@ -322,6 +361,7 @@ int main(int argc, char **argv)
 				"no kernel BTF at /sys/kernel/btf/vmlinux (CO-RE needs it)" :
 				"kernel too old for the BPF ring buffer (5.8+ required)");
 		emit_health(pipeline, hooks_n, hooks, 0, true);
+		vig_rules_free(rules);
 		vig_index_close(index);
 		vig_syslog_close(ectx.slog);
 		vig_pipeline_destroy(pipeline);
@@ -333,6 +373,7 @@ int main(int argc, char **argv)
 	if (!skel) {
 		fprintf(stderr, "vigil-kernel-monitor: failed to load the eBPF object: %s\n",
 			strerror(errno));
+		vig_rules_free(rules);
 		vig_index_close(index);
 		vig_syslog_close(ectx.slog);
 		vig_pipeline_destroy(pipeline);
@@ -368,6 +409,7 @@ int main(int argc, char **argv)
 	if (!rb) {
 		fprintf(stderr, "vigil-kernel-monitor: ring buffer setup failed\n");
 		vigil_bpf__destroy(skel);
+		vig_rules_free(rules);
 		vig_index_close(index);
 		vig_syslog_close(ectx.slog);
 		vig_pipeline_destroy(pipeline);
@@ -424,6 +466,7 @@ int main(int argc, char **argv)
 
 	ring_buffer__free(rb);
 	vigil_bpf__destroy(skel);
+	vig_rules_free(rules);
 	vig_index_close(index);
 	vig_syslog_close(ectx.slog);
 	vig_pipeline_destroy(pipeline);
