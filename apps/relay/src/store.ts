@@ -582,16 +582,19 @@ export class RelayStore {
     const rows = this.db
       .prepare('SELECT id, version, body FROM rule_snapshots WHERE device_id = ? ORDER BY id')
       .all(device) as RuleRow[];
-    return rows.map((r) => ({ device, id: r.id, version: r.version, ...ruleSummary(r.body) }));
+    return rows.flatMap((r) => ruleSummaries(device, r.id, r.version, parseBody(r.body)));
   }
 
   rule(device: string, id: string): RelayRuleRow | undefined {
+    // The snapshot record's id is the envelope's ('rules'), not the rule
+    // ids inside it, so the lookup scans the device's snapshot — one row
+    // per device — and matches there.
     const row = this.db
-      .prepare('SELECT id, version, body FROM rule_snapshots WHERE device_id = ? AND id = ?')
-      .get(device, id) as RuleRow | undefined;
+      .prepare('SELECT id, version, body FROM rule_snapshots WHERE device_id = ? LIMIT 1')
+      .get(device) as RuleRow | undefined;
     return row === undefined
       ? undefined
-      : { device, id: row.id, version: row.version, ...ruleSummary(row.body) };
+      : ruleSummaries(device, row.id, row.version, parseBody(row.body)).find((r) => r.id === id);
   }
 
   /**
@@ -774,6 +777,47 @@ function ruleSummary(body: unknown): {
         : 'medium',
     exclusions: Array.isArray(b['exclusions']) ? b['exclusions'].length : 0,
   };
+}
+
+/**
+ * The rule rows a shipped rules record carries. The desktop ships one
+ * snapshot envelope per device — `{ rules: [core Rule, …] }`, each rule
+ * with its own id and version — so one row per rule comes out here. A flat
+ * rule body (the record itself a rule) is tolerated: it is one rule under
+ * the record's own id and version.
+ */
+function ruleSummaries(
+  device: string,
+  recordId: string,
+  recordVersion: number,
+  body: unknown,
+): RelayRuleRow[] {
+  const envelope =
+    typeof body === 'object' &&
+    body !== null &&
+    Array.isArray((body as Record<string, unknown>)['rules'])
+      ? ((body as Record<string, unknown>)['rules'] as unknown[])
+      : [body];
+  return envelope.map((entry) => {
+    const r = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>) : {};
+    const summary = ruleSummary(entry);
+    return {
+      device,
+      id: typeof r['id'] === 'string' ? r['id'] : recordId,
+      version: typeof r['version'] === 'number' ? r['version'] : recordVersion,
+      ...summary,
+    };
+  });
+}
+
+/** The stored body is JSON text; a malformed one projects as an empty rule
+ * rather than failing the tool — the ingest side validated nothing deeper. */
+function parseBody(body: string): unknown {
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    return {};
+  }
 }
 
 /**
