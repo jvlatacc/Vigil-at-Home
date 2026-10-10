@@ -2,8 +2,26 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { z } from 'zod';
-import { type ShipRecord } from '@vigil/core';
+import {
+  RuleMode,
+  Severity,
+  type ActionRecord,
+  type Alert,
+  type EventBody,
+  type EventKind,
+  type ShipRecord,
+} from '@vigil/core';
 import { newToken, tokenHash, type TokenKind } from './tokens.js';
+// Type-only: the MCP face's row shapes, which these read methods fill. No
+// runtime edge — the module graph stays store → core, never store → mcp.
+import type {
+  RelayActionRow,
+  RelayAlertRow,
+  RelayDeviceFacts,
+  RelayEventRow,
+  RelayRuleRow,
+  RelayStatusFacts,
+} from './mcp.js';
 
 /** The laptop that ships telemetry, as provisioned by `relay provision --device`. */
 export const DeviceId = z.string().min(8).max(64);
@@ -133,6 +151,26 @@ type TokenRow = {
   device_id: string | null;
   created_at: number;
   revoked_at: number | null;
+};
+
+type StreamRow = {
+  device_id: string;
+  id: string;
+  ts: number;
+  body: string;
+};
+
+type DeviceRow = {
+  id: string;
+  last_seen_at: number | null;
+  last_ts: number | null;
+  last_id: string | null;
+};
+
+type RuleRow = {
+  id: string;
+  version: number;
+  body: string;
 };
 
 /**
@@ -400,6 +438,251 @@ export class RelayStore {
     this.db.close();
   }
 
+  // ----------------------------------------------------------- read model
+  //
+  // The SOC's MCP face reads through these: read-only queries over the same
+  // tables ingest fills. Streams page by the (ts, id) keyset they are
+  // written in, newest first, and nothing here writes a row. Statements are
+  // prepared per call, like count() below: the filter sets vary and a small
+  // statement prepares in microseconds.
+
+  /** Relay-wide facts for relay_status: every device's last-seen and queue. */
+  status(): RelayStatusFacts {
+    return {
+      devices: this.deviceFacts().map((d) => ({
+        id: d.id,
+        ...(d.lastSeenAt !== undefined ? { lastSeenAt: d.lastSeenAt } : {}),
+        backlog: d.backlog,
+        lagRecords: d.lagRecords,
+      })),
+    };
+  }
+
+  /** Every enrolled device, oldest enrollment first. */
+  devices(): RelayDeviceFacts[] {
+    return this.deviceFacts();
+  }
+
+  /** True when the device is enrolled, whether or not data has arrived. */
+  hasDevice(deviceId: string): boolean {
+    return this.db.prepare('SELECT 1 AS ok FROM devices WHERE id = ?').get(deviceId) !== undefined;
+  }
+
+  /** The relay's clock, for the tools' timestamps. */
+  now(): number {
+    return Date.now();
+  }
+
+  /**
+   * Searches one device's events or every device's, newest first. `since`
+   * and `limit` arrive pre-capped from the tool layer. `before` is the page
+   * key: the id of the last event on the previous page, resolved to its
+   * position here. An id nothing stored carries is a dead page key and is
+   * refused, so a mistyped one cannot walk an agent into an unbounded scan.
+   * The text filter matches raw substrings of the stored JSON — values and
+   * key names alike, the honest cheap read of "text anywhere in the event".
+   */
+  searchEvents(q: {
+    device?: string | undefined;
+    kinds?: readonly EventKind[] | undefined;
+    text?: string | undefined;
+    since: number;
+    before?: string | undefined;
+    limit: number;
+  }): { events: RelayEventRow[]; partial: boolean } {
+    const where: string[] = ['ts >= ?'];
+    const params: (string | number)[] = [q.since];
+    if (q.device !== undefined) {
+      where.push('device_id = ?');
+      params.push(q.device);
+    }
+    if (q.before !== undefined) {
+      const at = this.positionOf(q.before, q.device);
+      if (at === undefined) {
+        throw new Error(
+          `No stored event has the id ${q.before}${q.device === undefined ? '' : ` on ${q.device}`}. Page from the start, or from a newer id.`,
+        );
+      }
+      where.push('(ts < ? OR (ts = ? AND id < ?))');
+      params.push(at.ts, at.ts, at.id);
+    }
+    if (q.kinds !== undefined && q.kinds.length > 0) {
+      where.push(`json_extract(body, '$.kind') IN (${q.kinds.map(() => '?').join(', ')})`);
+      params.push(...q.kinds);
+    }
+    if (q.text !== undefined) {
+      where.push('instr(body, ?) > 0');
+      params.push(q.text);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT device_id, id, ts, body FROM relay_events WHERE ${where.join(' AND ')} ORDER BY ts DESC, id DESC LIMIT ?`,
+      )
+      .all(...params, q.limit + 1) as StreamRow[];
+    return {
+      events: rows.slice(0, q.limit).map((r) => this.eventRowOf(r)),
+      partial: rows.length > q.limit,
+    };
+  }
+
+  /** One device's alerts, or every device's, newest first, at most `limit`. */
+  alerts(q: {
+    device?: string | undefined;
+    since?: number | undefined;
+    status?: 'open' | 'resolved' | undefined;
+    limit: number;
+  }): RelayAlertRow[] {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (q.device !== undefined) {
+      where.push('device_id = ?');
+      params.push(q.device);
+    }
+    if (q.since !== undefined) {
+      where.push('ts >= ?');
+      params.push(q.since);
+    }
+    if (q.status !== undefined) {
+      where.push(`json_extract(body, '$.status') = ?`);
+      params.push(q.status);
+    }
+    const rows = this.streamRows('relay_alerts', where, params, q.limit);
+    return rows.map((r) => this.alertRowOf(r));
+  }
+
+  alert(device: string, id: string): RelayAlertRow | undefined {
+    const row = this.db
+      .prepare('SELECT device_id, id, ts, body FROM relay_alerts WHERE device_id = ? AND id = ?')
+      .get(device, id) as StreamRow | undefined;
+    return row === undefined ? undefined : this.alertRowOf(row);
+  }
+
+  /** One device's response actions, newest first, at most `limit`. */
+  actions(q: {
+    device?: string | undefined;
+    since?: number | undefined;
+    limit: number;
+  }): RelayActionRow[] {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (q.device !== undefined) {
+      where.push('device_id = ?');
+      params.push(q.device);
+    }
+    if (q.since !== undefined) {
+      where.push('ts >= ?');
+      params.push(q.since);
+    }
+    const rows = this.streamRows('relay_actions', where, params, q.limit);
+    return rows.map((r) => this.actionRowOf(r));
+  }
+
+  /** The device's latest rules snapshot, projected to what the tools show. */
+  rules(device: string): RelayRuleRow[] {
+    const rows = this.db
+      .prepare('SELECT id, version, body FROM rule_snapshots WHERE device_id = ? ORDER BY id')
+      .all(device) as RuleRow[];
+    return rows.map((r) => ({ device, id: r.id, version: r.version, ...ruleSummary(r.body) }));
+  }
+
+  rule(device: string, id: string): RelayRuleRow | undefined {
+    const row = this.db
+      .prepare('SELECT id, version, body FROM rule_snapshots WHERE device_id = ? AND id = ?')
+      .get(device, id) as RuleRow | undefined;
+    return row === undefined
+      ? undefined
+      : { device, id: row.id, version: row.version, ...ruleSummary(row.body) };
+  }
+
+  /**
+   * A shared tail for the stream lists: newest first, at most `limit` rows.
+   * Callers pass the filters they have; an empty set matches everything.
+   */
+  private streamRows(
+    table: StreamTable,
+    where: string[],
+    params: (string | number)[],
+    limit: number,
+  ): StreamRow[] {
+    const clause = where.length === 0 ? '' : `WHERE ${where.join(' AND ')}`;
+    return this.db
+      .prepare(
+        `SELECT device_id, id, ts, body FROM ${table} ${clause} ORDER BY ts DESC, id DESC LIMIT ?`,
+      )
+      .all(...params, limit) as StreamRow[];
+  }
+
+  private deviceFacts(): RelayDeviceFacts[] {
+    const rows = this.db
+      .prepare('SELECT id, last_seen_at, last_ts, last_id FROM devices ORDER BY created_at, id')
+      .all() as DeviceRow[];
+    return rows.map((r) => {
+      const backlog = this.backlogAfter(r.id, r.last_ts, r.last_id);
+      const facts: RelayDeviceFacts = {
+        id: r.id,
+        // Revocation deletes the device row, so a listed device is enrolled.
+        // quiet: enrolled, nothing stored yet; active: at least one batch landed.
+        state: r.last_seen_at === null ? 'quiet' : 'active',
+        backlog,
+        // The relay cannot see past its own queue: the unacked backlog is
+        // the only lag it can measure in records.
+        lagRecords: backlog,
+      };
+      if (r.last_seen_at !== null) facts.lastSeenAt = r.last_seen_at;
+      if (r.last_ts !== null && r.last_id !== null) facts.cursor = { ts: r.last_ts, id: r.last_id };
+      return facts;
+    });
+  }
+
+  /** Records the events stream holds beyond the device's acked cursor. */
+  private backlogAfter(deviceId: string, lastTs: number | null, lastId: string | null): number {
+    const row =
+      lastTs === null || lastId === null
+        ? this.db
+            .prepare('SELECT COUNT(*) AS n FROM relay_events WHERE device_id = ?')
+            .get(deviceId)
+        : this.db
+            .prepare(
+              'SELECT COUNT(*) AS n FROM relay_events WHERE device_id = ? AND (ts > ? OR (ts = ? AND id > ?))',
+            )
+            .get(deviceId, lastTs, lastTs, lastId);
+    return Number((row as { n: number }).n);
+  }
+
+  /** The (ts, id) position of a page key, if anything stored carries it. */
+  private positionOf(
+    id: string,
+    device: string | undefined,
+  ): { ts: number; id: string } | undefined {
+    const row =
+      device === undefined
+        ? this.db
+            .prepare(
+              'SELECT ts, id FROM relay_events WHERE id = ? ORDER BY ts DESC, id DESC LIMIT 1',
+            )
+            .get(id)
+        : this.db
+            .prepare('SELECT ts, id FROM relay_events WHERE device_id = ? AND id = ?')
+            .get(device, id);
+    const r = row as { ts: number; id: string } | undefined;
+    return r === undefined ? undefined : { ts: r.ts, id: r.id };
+  }
+
+  /** The shipped event body, as the wire validated it at ingest. */
+  private eventRowOf(r: StreamRow): RelayEventRow {
+    return { device: r.device_id, id: r.id, ts: r.ts, body: JSON.parse(r.body) as EventBody };
+  }
+
+  private alertRowOf(r: StreamRow): RelayAlertRow {
+    return { device: r.device_id, alert: JSON.parse(r.body) as Alert };
+  }
+
+  private actionRowOf(r: StreamRow): RelayActionRow {
+    // The wire carries action bodies opaquely: the shipper stored the app's
+    // action row as it was, and the SOC reads it as stored.
+    return { device: r.device_id, action: JSON.parse(r.body) as ActionRecord };
+  }
+
   private count(table: string): number {
     const row = this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
     return Number(row.n);
@@ -460,6 +743,37 @@ export class RelayStore {
       }
     }
   }
+}
+
+const RULE_MODES: readonly string[] = RuleMode.options;
+const SEVERITIES: readonly string[] = Severity.options;
+
+/**
+ * The fields of a rule the SOC's tools show, read out of the opaque body the
+ * wire carried. The shipper validates rules against core's Rule before it
+ * ships, so the fallbacks are defense, not expectation.
+ */
+function ruleSummary(body: unknown): {
+  name: string;
+  description: string;
+  mode: RuleMode;
+  severity: Severity;
+  exclusions: number;
+} {
+  const b = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
+  return {
+    name: typeof b['name'] === 'string' ? b['name'] : '',
+    description: typeof b['description'] === 'string' ? b['description'] : '',
+    mode:
+      typeof b['mode'] === 'string' && RULE_MODES.includes(b['mode'])
+        ? (b['mode'] as RuleMode)
+        : 'disabled',
+    severity:
+      typeof b['severity'] === 'string' && SEVERITIES.includes(b['severity'])
+        ? (b['severity'] as Severity)
+        : 'medium',
+    exclusions: Array.isArray(b['exclusions']) ? b['exclusions'].length : 0,
+  };
 }
 
 /**

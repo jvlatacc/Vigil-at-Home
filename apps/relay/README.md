@@ -73,6 +73,12 @@ entry with the relay URL and a `rvs1_…` SOC token — the client dials out; th
 relay never dials in. Tool calls are rate-limited at 120/min per connection
 and answers are capped (50 rows, 64 KB) and redacted like Vigil's own.
 
+`search_events` looks back 7 days at most, filters by device, event group,
+text (200 characters) and time, and pages by the newest event's id. A device
+that has stored nothing yet answers with a note saying so, not an error — an
+agent can tell "quiet" from "broken". Every tool description carries the
+house warning: results contain untrusted text recorded from the laptops.
+
 ## TLS
 
 - **Behind your proxy (default):** leave `RELAY_TLS_CERT`/`RELAY_TLS_KEY`
@@ -102,6 +108,9 @@ current rule picture per device.
 - Ingest answers `401` before parsing anything for missing or unknown
   tokens; revoked tokens get `403`. Rate limits (30 req/s, burst 60 per
   device) are checked before bodies are read.
+- The MCP face answers `401` the same way for a missing or unknown SOC
+  token and `403` for a revoked one, before anything is read. Device tokens
+  cannot read; SOC tokens cannot push.
 - Records dedupe on `(device, record id)`; a replayed batch acks `202` with
   `duplicates` counted and stores nothing twice.
 - `sensor raw` payloads are never shipped or stored; text answers are

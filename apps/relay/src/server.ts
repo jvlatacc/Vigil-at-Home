@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
 import { handleIngest, INGEST_PATH, sendJson } from './ingest.js';
+import { relayMcpHandler } from './mcp.js';
 import { KeyedBuckets } from './ratelimit.js';
 import { Retainer } from './retention.js';
 import { RelayStore } from './store.js';
+import { tokenHash } from './tokens.js';
 import type { RelayConfig } from './config.js';
 
 export interface RelayServer {
@@ -35,6 +37,18 @@ export function startRelay(config: RelayConfig, store?: RelayStore): Promise<Rel
   // laptop cannot starve another. Checked before any body is read.
   const buckets = new KeyedBuckets(config.ratePerSec, config.burst);
 
+  // The SOC's pull face: the same listener, its own bearer tokens, read-only
+  // tools over the store. A token works here only while it is a live SOC
+  // token; device tokens and anything revoked are refused. The push face and
+  // /healthz are untouched.
+  const mcp = relayMcpHandler({
+    store: ownedStore,
+    verifySocToken: (t) => {
+      const row = ownedStore.tokenByHash(tokenHash(t));
+      return row !== undefined && row.kind === 'soc' && row.revokedAt === undefined;
+    },
+  });
+
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
     const url = req.url ?? '/';
     if (req.method === 'GET' && (url === '/healthz' || url === '/healthz/')) {
@@ -51,6 +65,10 @@ export function startRelay(config: RelayConfig, store?: RelayStore): Promise<Rel
         maxBodyBytes: config.maxBodyBytes,
         buckets,
       });
+      return;
+    }
+    if (url === '/mcp' || url === '/mcp/') {
+      void mcp(req, res);
       return;
     }
     sendJson(res, 404, { error: 'not_found' });
