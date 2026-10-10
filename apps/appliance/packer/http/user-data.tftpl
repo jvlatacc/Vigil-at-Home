@@ -1,10 +1,10 @@
 #cloud-config
 # Build-boot seed for the Packer QEMU build only. Rendered at packer time
 # (appliance.pkr.hcl, cd_content) with the fresh per-build SSH public key
-# that apps/appliance/scripts/build.sh generates. The builder account's
-# credentials are removed by provision/harden.sh and the account itself is
-# deleted at the appliance's first boot — none of this survives in a
-# deployed appliance.
+# that apps/appliance/scripts/build.sh generates. The builder account, its
+# key, and its sudoers rule are removed by the appliance's first boot
+# (provision/harden.sh installs the removal) — none of this survives in a
+# deployed appliance, and the key's private half never enters the image.
 hostname: vigil-appliance-build
 
 users:
