@@ -47,7 +47,10 @@ jobs:
         run: packer init apps/appliance/packer
 
       - name: Validate the image template
-        run: packer validate apps/appliance/packer
+        # Absolute path, on purpose: templatefile sources resolve against the
+        # invocation path, so a relative arg from the repo root double-
+        # prefixes them (the same rule build.sh documents for packer build).
+        run: packer validate "$GITHUB_WORKSPACE/apps/appliance/packer"
 
       - name: ShellCheck the appliance scripts
         run: |
