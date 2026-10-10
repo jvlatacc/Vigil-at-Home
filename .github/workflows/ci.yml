@@ -106,3 +106,7 @@ jobs:
         run: kernel-monitor/scripts/ci_compile_btf.sh bookworm 6.1
       - name: CO-RE compile against Debian 13 (6.12) kernel BTF
         run: kernel-monitor/scripts/ci_compile_btf.sh trixie 6.12
+      - name: Packaging checks (shellcheck, unit verify, rsyslog syntax, uninstall idempotency)
+        run: |
+          sudo apt-get install -y --no-install-recommends shellcheck rsyslog
+          sudo sh kernel-monitor/scripts/check_packaging.sh
