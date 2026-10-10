@@ -27,6 +27,7 @@ step() {
 step "shellcheck (sources followed)"
 command -v shellcheck >/dev/null || fail "shellcheck not installed (apt-get install shellcheck)"
 shellcheck -x --source-path="$HERE" "$HERE"/*.sh
+echo "shellcheck clean (every script, sources followed)"
 
 step "systemd unit (systemd-analyze verify in a stubbed root)"
 command -v systemd-analyze >/dev/null || fail "systemd-analyze not installed"
