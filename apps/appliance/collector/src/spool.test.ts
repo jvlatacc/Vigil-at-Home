@@ -213,7 +213,10 @@ describe('SpoolWriter', () => {
     writer.append(osqueryRecord('2026-10-09T12:00:01.000Z'));
     await writer.close();
 
-    expect(segments.map((segment) => segment.source)).toEqual(['netflow', 'osquery']);
+    // onSegmentClosed fires as each concurrent gzip promise settles, so the
+    // callback order is not deterministic (differs on APFS). Assert per-source
+    // structure, not completion order.
+    expect(segments.map((segment) => segment.source).sort()).toEqual(['netflow', 'osquery']);
     expect(rawFiles('netflow')).toHaveLength(0);
     expect(rawFiles('osquery')).toHaveLength(0);
     expect(gzFiles('netflow')).toHaveLength(1);
