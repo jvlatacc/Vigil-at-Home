@@ -15,6 +15,7 @@ import {
 import { z } from 'zod';
 import type { CALL_NAMES, PUSH_NAMES } from './channels.js';
 import { AiPrefsPatch, AiProvider, type AiActionResult, type AiView } from './ai.js';
+import { SocSettingsPatch, type SocView } from './soc.js';
 import type {
   AgentCandidate,
   AgentDetail,
@@ -312,6 +313,11 @@ export const calls = {
   signInAi: z.tuple([AiProvider]),
   shareCodexSignIn: z.tuple([]),
   stopSharingCodexSignIn: z.tuple([]),
+  // SOC export (main/soc) — opt-in, off by default.
+  getSoc: z.tuple([]),
+  setSoc: z.tuple([SocSettingsPatch]),
+  clearSocKey: z.tuple([]),
+  flushSoc: z.tuple([]),
   // Update notices (main/updates.ts).
   getUpdates: z.tuple([]),
   checkUpdates: z.tuple([]),
@@ -747,6 +753,10 @@ export interface CallResults {
   signInAi: AiActionResult;
   shareCodexSignIn: AiActionResult;
   stopSharingCodexSignIn: void;
+  getSoc: SocView;
+  setSoc: SocView;
+  clearSocKey: SocView;
+  flushSoc: void;
   getUpdates: UpdateView;
   checkUpdates: UpdateView;
   setUpdateAuto: void;

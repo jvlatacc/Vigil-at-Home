@@ -3,6 +3,7 @@ pnpm-lock.yaml
 **/out
 **/coverage
 apps/desktop/build
+demo/.run
 kernel-monitor/build
 apps/relay/build
 apps/relay/Dockerfile

@@ -35,6 +35,8 @@ import { seedPackDemo } from './pack/demo.js';
 import { PowerPolicy } from './power.js';
 import { RuleSuggestions } from './rule-suggestions.js';
 import { hashSelf, selfPaths } from './self-path.js';
+import { SocForwarder } from './soc/forwarder.js';
+import { SocSettingsStore } from './soc/settings.js';
 import {
   AwakeClock,
   HEALTH_CHECK_MS,
@@ -296,6 +298,19 @@ function start(): void {
   ai.labelEventsFrom(core);
   ai.reviewRulesFrom(core);
 
+  // SOC export is opt-in and off by default: until the user turns it on,
+  // nothing here can touch the network. The forwarder subscribes to alerts
+  // exactly like the explainer and hands them to the soc-export core.
+  const socKeys = new SocSettingsStore({
+    store,
+    keyPath: join(dataDir, 'soc-keys.json'),
+    cipher,
+  });
+  const soc = new SocForwarder();
+  soc.start(core, socKeys);
+  socKeys.on('changed', () => windows.broadcast('changed'));
+  app.on('before-quit', () => void soc.stop());
+
   // Tells the user when a newer release is out. Unsigned builds can't update
   // themselves, so it offers the DMG; nothing installs without the user.
   const updates = new UpdateChecker({
@@ -386,6 +401,7 @@ function start(): void {
     agents,
     { service: pack, connectors },
     feedKeys,
+    { keys: socKeys, forwarder: soc },
     relay,
     {
       install: installHelper,

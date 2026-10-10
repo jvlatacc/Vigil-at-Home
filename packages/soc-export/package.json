@@ -1,0 +1,28 @@
+{
+  "name": "@vigil/soc-export",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Maps Vigil alerts to Vigil SOC findings and ships them: opt-in, and redacted before anything leaves the machine",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mcp": "./src/mcp/index.ts",
+    "./mcp/main": "./src/mcp/main.ts"
+  },
+  "bin": {
+    "soc-export": "./bin/soc-export.js"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "@vigil/ai": "workspace:*",
+    "@vigil/core": "workspace:*",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}
