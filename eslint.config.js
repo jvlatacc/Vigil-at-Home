@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       'apps/desktop/build/**',
+      'demo/.run/**',
     ],
   },
   js.configs.recommended,

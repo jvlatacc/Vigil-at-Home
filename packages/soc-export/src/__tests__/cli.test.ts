@@ -284,17 +284,21 @@ describe('main upload and case', () => {
       expect(fake.formField('format')).toBe('json');
       const file = fake.formField('file');
       const uploaded = JSON.parse(await (file as File).text()) as Record<string, unknown>;
-      expect(uploaded['case_id']).toBe('case-2026-10-09-demo');
+      // The router's JSON path routes a {findings, cases} document by key and
+      // ignores data_type for JSON files — the case rides in a cases array.
+      const cases = uploaded['cases'] as Array<Record<string, unknown>>;
+      const doc = cases?.[0];
+      expect(doc?.['case_id']).toBe('case-2026-10-09-demo');
       // Whatever names this machine exposes must not survive the upload;
       // concrete-name redaction itself is proven in case-import.test.ts.
       if (names.username) {
-        expect(String(uploaded['title'])).not.toContain(names.username);
-        expect(String(uploaded['description'])).not.toContain(names.username);
+        expect(String(doc?.['title'])).not.toContain(names.username);
+        expect(String(doc?.['description'])).not.toContain(names.username);
       }
       if (names.hostname) {
-        expect(String(uploaded['description'])).not.toContain(names.hostname);
+        expect(String(doc?.['description'])).not.toContain(names.hostname);
       }
-      expect(uploaded['finding_ids']).toEqual(['vah-a1', 'vah-a2']);
+      expect(doc?.['finding_ids']).toEqual(['vah-a1', 'vah-a2']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

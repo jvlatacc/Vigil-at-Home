@@ -158,10 +158,31 @@ export class VStrikeClient {
   /**
    * The frozen /api/v1 update: an alert resolved at home closes its finding
    * in the SOC. Idempotent, so a retried resolution cannot double-apply.
+   *
+   * A 404 here is retried: the push and resolution queues flush
+   * independently, so a resolution can outrun the creation POST still in
+   * flight — "finding not found" is then transient, not permanent. If the
+   * finding truly does not exist, the retries exhaust and the resolution
+   * queue's drop path reports it.
    */
   async patchFinding(findingId: string, update: FindingUpdate): Promise<FindingUpdateResponse> {
     const path = `/api/v1/findings/${encodeURIComponent(findingId)}`;
-    const response = await this.send('PATCH', path, JSON.stringify(update));
+    let response: Response;
+    try {
+      response = await this.send('PATCH', path, JSON.stringify(update));
+    } catch (cause) {
+      if (cause instanceof TransportError && cause.status === 404) {
+        throw new TransportError(
+          `Finding ${findingId} not found yet (the push may still be in flight).`,
+          {
+            status: 404,
+            retryable: true,
+            cause,
+          },
+        );
+      }
+      throw cause;
+    }
     const body = await readJson(response);
     if (!isRecord(body) || typeof body['success'] !== 'boolean') {
       throw new TransportError(`Malformed update response from Vigil SOC.`, {

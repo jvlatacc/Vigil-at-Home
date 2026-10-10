@@ -41,7 +41,12 @@ export function redactCaseDocument(doc: IngestCase, names: RedactionNames): Inge
   };
 }
 
-/** The exact bytes the case upload sends: one JSON object. */
+/**
+ * The exact bytes the case upload sends. Wrapped as `{"cases": [doc]}` —
+ * the ingest router's JSON path routes a `{findings, cases}` document by
+ * key and ignores `data_type` for JSON files, so a bare case object would
+ * count as nothing and the job would fail with "No data imported".
+ */
 export function serializeCase(doc: IngestCase): string {
-  return JSON.stringify(doc);
+  return JSON.stringify({ cases: [doc] });
 }
