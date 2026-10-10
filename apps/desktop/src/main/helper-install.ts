@@ -290,16 +290,12 @@ export function helperScriptFiles(
     : ['install.sh', 'node', 'helper.mjs', 'vigil-helper', 'com.vigilathome.helper.plist'];
 }
 
-const hashCache = new Map<string, { key: string; hex: string }>();
-
 function fileSha256(path: string): string {
-  const st = statSync(path);
-  const key = `${st.size}:${st.mtimeMs}:${st.ino}`;
-  const hit = hashCache.get(path);
-  if (hit?.key === key) return hit.hex;
-  const hex = createHash('sha256').update(readFileSync(path)).digest('hex');
-  hashCache.set(path, { key, hex });
-  return hex;
+  // No stat-keyed cache: the pin flow rewrites the app in place, and on
+  // coarse-mtime filesystems (e.g. tmpfs) a same-size rewrite within one
+  // tick gets the previous write's mtime+ino — a cached hash would then
+  // hide a needed helper update instead of prompting for it.
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
 /**
