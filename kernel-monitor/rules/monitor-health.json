@@ -1,8 +1,8 @@
 {
-	"name": "monitor-health",
-	"kind": "monitor.health",
-	"severity": "warning",
-	"match": {
-		"droppedDeltaMin": 1000
-	}
+  "name": "monitor-health",
+  "kind": "monitor.health",
+  "severity": "warning",
+  "match": {
+    "droppedDeltaMin": 1000
+  }
 }

@@ -8,13 +8,13 @@ a typo can never silently disable a rule mid-stream.
 
 ## Schema
 
-| Field         | Type   | Notes                                                            |
-|---------------|--------|------------------------------------------------------------------|
-| `name`        | string | required; syslog-safe identifier, unique across the directory; appears as the SD param `rule=` in VIGALERT messages |
-| `description` | string | optional; human context, never parsed                            |
+| Field         | Type   | Notes                                                                                                                                                   |
+| ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | string | required; syslog-safe identifier, unique across the directory; appears as the SD param `rule=` in VIGALERT messages                                     |
+| `description` | string | optional; human context, never parsed                                                                                                                   |
 | `kind`        | string | required; one of the event kinds the evaluator matches: `process.exec`, `file`, `network.listen`, `privilege.change`, `kernel.module`, `monitor.health` |
-| `severity`    | string | required; `critical` or `warning` — becomes the RFC 5424 severity of the VIGALERT message (PRI 34 / 36 at facility 4) |
-| `match`       | object | required; at least one matcher, keyed per kind below             |
+| `severity`    | string | required; `critical` or `warning` — becomes the RFC 5424 severity of the VIGALERT message (PRI 34 / 36 at facility 4)                                   |
+| `match`       | object | required; at least one matcher, keyed per kind below                                                                                                    |
 
 Matcher keys by kind — unknown keys are load errors:
 
