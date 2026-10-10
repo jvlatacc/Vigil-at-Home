@@ -67,6 +67,49 @@ jobs:
             sudo -E env "PATH=$PATH" VIGIL_LINUX_INTEGRATION=1 pnpm vitest run "$f"
           done
 
+  kernel-monitor:
+    # The eBPF kernel monitor (kernel-monitor/): run its host-runnable C tests
+    # and compile the CO-RE object against the Debian 12 (6.1) and Debian 13
+    # (6.12) kernel BTFs. Loading and attaching the programs needs a real
+    # Debian kernel with privileges, which hosted CI cannot provide — that
+    # runtime check stays VM-pending (see kernel-monitor/README.md).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm gcc make cmake libbpf-dev \
+            linux-tools-common linux-tools-generic \
+            zstd xz-utils bzip2 gzip
+          # Ubuntu ships bpftool as per-kernel versioned binaries under
+          # /usr/lib/linux-tools*, and the /usr/sbin/bpftool wrapper demands
+          # an exact running-kernel match that runner images cannot satisfy
+          # (they boot kernels newer than the tools archive tracks). Every
+          # use in this job is host-side (skeleton generation, BTF dump), so
+          # link the newest installed binary directly, ahead of the wrapper.
+          BPFTOOL_BIN=$(find /usr/lib/linux-tools* -name bpftool -type f | sort -V | tail -1)
+          if [ -z "$BPFTOOL_BIN" ]; then
+            echo "no bpftool binary installed by linux-tools-generic" >&2
+            exit 1
+          fi
+          echo "using $BPFTOOL_BIN"
+          sudo ln -sf "$BPFTOOL_BIN" /usr/local/bin/bpftool
+          bpftool version
+      - name: Host unit tests (ctest)
+        run: make -C kernel-monitor test
+      - name: Verifier pre-check
+        run: kernel-monitor/scripts/run_verifier_check.sh
+      - name: CO-RE compile against Debian 12 (6.1) kernel BTF
+        run: kernel-monitor/scripts/ci_compile_btf.sh bookworm 6.1
+      - name: CO-RE compile against Debian 13 (6.12) kernel BTF
+        run: kernel-monitor/scripts/ci_compile_btf.sh trixie 6.12
+      - name: Packaging checks (shellcheck, unit verify, rsyslog syntax, uninstall idempotency)
+        run: |
+          sudo apt-get install -y --no-install-recommends shellcheck rsyslog
+          sudo sh kernel-monitor/scripts/check_packaging.sh
   audit:
     # Advisory scan of what actually ships: --prod covers runtime
     # dependencies only. Advisories in the build-only electron-builder chain

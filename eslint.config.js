@@ -12,6 +12,7 @@ export default tseslint.config(
       '**/coverage/**',
       'apps/desktop/build/**',
       'demo/.run/**',
+      'kernel-monitor/build/**',
       'apps/relay/build/**',
     ],
   },

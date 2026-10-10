@@ -1,0 +1,9 @@
+{
+  "name": "exec-after-escalation",
+  "description": "A task ran a new executable within the window after its euid became 0. The window is measured on the record's own monotonic timeline — no wall clock in matching.",
+  "kind": "process.exec",
+  "severity": "critical",
+  "match": {
+    "escalationWindowMs": 5000
+  }
+}

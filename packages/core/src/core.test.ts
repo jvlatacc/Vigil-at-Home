@@ -44,6 +44,46 @@ describe('SensorEvent', () => {
       false,
     );
   });
+
+  it('parses the kernel monitor kinds, and only from the kernel monitor', () => {
+    const base = {
+      id: 'e1',
+      ts: 1,
+      source: 'kernel-monitor',
+      at: '2024-10-09T14:04:11.500Z',
+      monoNs: 9000000000,
+      tgid: 20531,
+      uid: 1000,
+      comm: 'sh',
+    };
+    expect(
+      SensorEvent.parse({ ...base, kind: 'privilege.change', fromUid: 1000, toUid: 0 }).kind,
+    ).toBe('privilege.change');
+    expect(
+      SensorEvent.parse({ ...base, kind: 'kernel.module', module: 'v4l2loopback', op: 'load' })
+        .kind,
+    ).toBe('kernel.module');
+    expect(
+      SensorEvent.parse({
+        ...base,
+        kind: 'monitor.health',
+        droppedTotal: 0,
+        hooks: ['tracepoint/sched/sched_process_exec'],
+        degraded: false,
+      }).kind,
+    ).toBe('monitor.health');
+    // The kernel kinds only ever carry the daemon's own source.
+    expect(
+      SensorEvent.safeParse({
+        ...base,
+        source: 'osquery',
+        kind: 'monitor.health',
+        droppedTotal: 0,
+        hooks: [],
+        degraded: false,
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('action policy', () => {

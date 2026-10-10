@@ -1,0 +1,11 @@
+# build outputs
+build/
+build-asan/
+
+# generated CO-RE inputs (regenerated from kernel BTF at build time)
+src/vmlinux.h
+src/vigil.skel.h
+bpf/vigil.bpf.o
+
+# BTF work dirs from scripts/ci_compile_btf.sh
+.btf-work/

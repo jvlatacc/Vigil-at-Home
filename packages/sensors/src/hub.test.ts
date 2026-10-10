@@ -32,6 +32,7 @@ describe('sensor hub', () => {
       sink: (e) => events.push(e),
       santaLogPath: false,
       osqueryResultsPath: log,
+      kernelMonitorPath: false,
       positions: { osquery: { ino: statSync(log).ino, offset: 0 } },
       onError: (source, err) => errors.push(`${source}: ${err.message}`),
     });

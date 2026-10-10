@@ -1,11 +1,14 @@
 import type { AgentTag, EventKind, RuleMode, SensorEvent } from '@vigil/core';
 import {
+  Activity,
   AppWindow,
   Bot,
   ChevronDown,
   ChevronRight,
+  Cpu,
   FileText,
   Globe,
+  KeyRound,
   Pause,
   Play,
   Puzzle,
@@ -407,6 +410,9 @@ const KIND_ICON: Record<EventKind, ReactNode> = {
   'browser.extension': <Puzzle size={15} />,
   'system.alert': <ShieldAlert size={15} />,
   'agent.tool_request': <Bot size={15} />,
+  'privilege.change': <KeyRound size={15} />,
+  'kernel.module': <Cpu size={15} />,
+  'monitor.health': <Activity size={15} />,
 };
 
 /** One line of the feed, opening into the event's fields. Also used for an agent session's events. */

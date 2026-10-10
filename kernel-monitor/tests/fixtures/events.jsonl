@@ -1,0 +1,6 @@
+{"monoNs": 9000000000, "tgid": 20531, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "sh", "exe": "/tmp/x"}
+{"monoNs": 1000000, "tgid": 20510, "ppid": 1, "uid": 1000, "euid": 1000, "comm": "bash", "exe": "/usr/bin/bash"}
+{"monoNs": 5000000000, "tgid": 20600, "ppid": 20510, "uid": 0, "euid": 0, "comm": "curl", "exe": "/usr/bin/curl"}
+{"monoNs": 2000000000, "tgid": 20544, "ppid": 20510, "uid": 1000, "euid": 0, "comm": "sudo", "exe": "/usr/bin/sudo"}
+{"monoNs": 7000000000, "tgid": 20700, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "python3", "exe": "/usr/bin/python3"}
+{"monoNs": 3000000000, "tgid": 20550, "ppid": 20510, "uid": 1000, "euid": 1000, "comm": "gcc", "exe": "/usr/bin/gcc"}

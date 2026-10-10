@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { AgentId, Id, ProcessRef, Timestamp } from './common.js';
 
 /** Where an event came from. */
-export const EventSource = z.enum(['osquery', 'santa', 'vigil', 'test']);
+export const EventSource = z.enum(['osquery', 'santa', 'vigil', 'test', 'kernel-monitor']);
 export type EventSource = z.infer<typeof EventSource>;
 
 const base = {
@@ -184,6 +184,56 @@ export const AgentToolRequestEvent = z.object({
 });
 export type AgentToolRequestEvent = z.infer<typeof AgentToolRequestEvent>;
 
+/**
+ * The kernel-monitor daemon's identity fields, shared by its kinds (the
+ * spec's kernel base): two clocks — `at`, the wall time the daemon anchored
+ * the event to, and `monoNs`, the monotonic stamp it orders by — plus the
+ * acting task. `id` and `ts` are the union's storage contract (the events
+ * table's primary key and time column), filled by the sensor's parser, not
+ * by the daemon.
+ */
+const kernelBase = {
+  id: Id,
+  ts: Timestamp,
+  source: z.literal('kernel-monitor'),
+  at: z.string(),
+  monoNs: z.number().int(),
+  tgid: z.number().int(),
+  uid: z.number().int(),
+  comm: z.string().max(16),
+  /** The daemon's original index line, kept for investigation. */
+  raw: z.unknown().optional(),
+};
+
+/** A task changed its credentials: the setuid family, capset, a sudo step. */
+export const PrivilegeChangeEvent = z.object({
+  ...kernelBase,
+  kind: z.literal('privilege.change'),
+  fromUid: z.number().int(),
+  toUid: z.number().int(),
+  caps: z.array(z.string()).optional(),
+});
+export type PrivilegeChangeEvent = z.infer<typeof PrivilegeChangeEvent>;
+
+/** A kernel module was loaded or unloaded. */
+export const KernelModuleEvent = z.object({
+  ...kernelBase,
+  kind: z.literal('kernel.module'),
+  module: z.string(),
+  op: z.enum(['load', 'unload']),
+});
+export type KernelModuleEvent = z.infer<typeof KernelModuleEvent>;
+
+/** The monitor's own heartbeat: drop counters, the hooks it attached, and whether it had to fall back. */
+export const MonitorHealthEvent = z.object({
+  ...kernelBase,
+  kind: z.literal('monitor.health'),
+  droppedTotal: z.number().int(),
+  hooks: z.array(z.string()),
+  degraded: z.boolean(),
+});
+export type MonitorHealthEvent = z.infer<typeof MonitorHealthEvent>;
+
 export const SensorEvent = z.discriminatedUnion('kind', [
   ProcessExecEvent,
   ProcessExitEvent,
@@ -195,6 +245,9 @@ export const SensorEvent = z.discriminatedUnion('kind', [
   BrowserExtensionEvent,
   SystemAlertEvent,
   AgentToolRequestEvent,
+  PrivilegeChangeEvent,
+  KernelModuleEvent,
+  MonitorHealthEvent,
 ]);
 export type SensorEvent = z.infer<typeof SensorEvent>;
 export type EventKind = SensorEvent['kind'];
@@ -209,6 +262,9 @@ export const EventKind = z.enum([
   'browser.extension',
   'system.alert',
   'agent.tool_request',
+  'privilege.change',
+  'kernel.module',
+  'monitor.health',
 ]);
 
 export type EventOfKind<K extends EventKind> = Extract<SensorEvent, { kind: K }>;
