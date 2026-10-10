@@ -1,0 +1,10 @@
+{
+  "name": "foreign-listen",
+  "description": "A socket was bound or listened on an address outside the loopback allowlist — the port is reachable from beyond the machine. Binds are included because they hold the port open the same way.",
+  "kind": "network.listen",
+  "severity": "warning",
+  "match": {
+    "allowCidrs": ["127.0.0.0/8"],
+    "allowAddresses": ["::1"]
+  }
+}

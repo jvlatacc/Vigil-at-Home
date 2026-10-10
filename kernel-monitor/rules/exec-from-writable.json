@@ -1,0 +1,9 @@
+{
+  "name": "exec-from-writable",
+  "description": "An executable image was run from a classically writable staging location. The evaluator matches the recorded exe path; world-writable directories elsewhere are not classified at match time (no stat, no nondeterminism).",
+  "kind": "process.exec",
+  "severity": "critical",
+  "match": {
+    "pathPrefixes": ["/tmp", "/var/tmp", "/dev/shm"]
+  }
+}

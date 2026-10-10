@@ -1,0 +1,9 @@
+{
+  "name": "module-load",
+  "description": "Any kernel module load. Module unload is indexed but not alerted on by default.",
+  "kind": "kernel.module",
+  "severity": "warning",
+  "match": {
+    "ops": ["load"]
+  }
+}
