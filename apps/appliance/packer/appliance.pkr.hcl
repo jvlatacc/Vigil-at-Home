@@ -64,8 +64,10 @@ variable "disk_size" {
 }
 
 # Throwaway builder credentials for the build boot. build.sh generates an
-# ed25519 keypair per build and passes both halves; nothing is baked into
-# the image (harden.sh removes the builder user and its authorized_keys).
+# ed25519 keypair per build and passes both halves; nothing usable is baked
+# into the image: the private half is destroyed after the build, and
+# harden.sh arranges the builder account's removal at the appliance's
+# first boot.
 variable "builder_ssh_pubkey" {
   type    = string
   default = ""
