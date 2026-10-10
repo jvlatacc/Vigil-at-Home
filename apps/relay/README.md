@@ -192,19 +192,10 @@ current rule picture per device.
 
 ## Failure modes
 
-The SOC-facing MCP server runs on the same listener over Streamable HTTP
-(`/mcp`), with the read-only tools (`relay_status`, `list_devices`,
-`search_events`, `list_alerts`, `get_alert`, `list_actions`, `list_rules`,
-`get_rule`). In the SOC's MCP client configuration, add a Streamable HTTP
-entry with the relay URL and a `rvs1_…` SOC token — the client dials out; the
-relay never dials in. Tool calls are rate-limited at 120/min per connection
-and answers are capped (50 rows, 64 KB) and redacted like Vigil's own.
-
-`search_events` looks back 7 days at most, filters by device, event group,
-text (200 characters) and time, and pages by the newest event's id. A device
-that has stored nothing yet answers with a note saying so, not an error — an
-agent can tell "quiet" from "broken". Every tool description carries the
-house warning: results contain untrusted text recorded from the laptops.
+The MCP face answers with the same discipline as ingest: limits checked
+before anything is read, malformed input refused without partial storage, and
+a device that has shipped nothing yet answered with a note — "quiet" is not
+"broken".
 
 | Surface | Condition                    | Response                                              |
 | ------- | ---------------------------- | ----------------------------------------------------- |
@@ -217,30 +208,6 @@ house warning: results contain untrusted text recorded from the laptops.
 | MCP     | Revoked SOC token            | 403                                                   |
 | MCP     | Rate exceeded                | 429                                                   |
 | MCP     | Device with no data yet      | Empty result with a note — "quiet" is not "broken"    |
-
-## TLS
-
-- **Behind your proxy (default):** leave `RELAY_TLS_CERT`/`RELAY_TLS_KEY`
-  unset and terminate TLS on your load balancer or reverse proxy; the
-  container speaks plain HTTP to it only.
-- **Relay-terminated:** mount the certificate and key and set
-  `RELAY_TLS_CERT` and `RELAY_TLS_KEY` (both or neither).
-
-## Configuration
-
-| Variable                           | Default   | Meaning                                             |
-| ---------------------------------- | --------- | --------------------------------------------------- |
-| `RELAY_DATA_DIR`                   | `data`    | SQLite database and WAL location (volume in Docker) |
-| `RELAY_HOST`                       | `0.0.0.0` | Listen address                                      |
-| `RELAY_PORT`                       | `8443`    | Listen port                                         |
-| `RELAY_MAX_DISK_MB`                | `10240`   | Disk cap; oldest telemetry evicted first            |
-| `RELAY_RETENTION_DAYS`             | `30`      | Age cap on events, alerts and actions               |
-| `RELAY_MAX_BODY_MB`                | `16`      | Largest accepted (compressed) ingest body           |
-| `RELAY_TLS_CERT` / `RELAY_TLS_KEY` | unset     | Serve TLS from the relay itself                     |
-
-Retention runs hourly and whenever the store crosses its 10,000-insert
-threshold. Rule snapshots are exempt from eviction so the SOC always has a
-current rule picture per device.
 
 ## Security posture
 
