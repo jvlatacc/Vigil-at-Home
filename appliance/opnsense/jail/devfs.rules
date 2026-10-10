@@ -1,0 +1,12 @@
+# vigil-flow devfs ruleset — reference fragment.
+# install.sh appends this exact block (between the vigil-flow markers) to
+# /etc/devfs.rules on the OPNsense host. Ruleset 5 extends the default jail
+# ruleset with one deliberate grant: visibility of bpf devices, which is what
+# lets softflowd capture inside the non-VNET jail. The grant is auditable
+# here and in /etc/devfs.rules, and uninstall.sh strips the marked block.
+
+# >>> vigil-flow >>> (added by appliance/opnsense/install.sh)
+[devfsrules_vigil_flow=5]
+add include $devfsrules_jail
+add path 'bpf*' unhide
+# <<< vigil-flow <<<
