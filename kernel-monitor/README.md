@@ -15,14 +15,14 @@ kernel hooks (tracepoints, LSM) ──► shared ring buffer ──► daemon:
 
 ## Layout
 
-| Path              | Contents                                                                                                                                                             |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bpf/vigil.bpf.c` | the single CO-RE object: sched + module tracepoints, LSM file/network/privilege hooks with kprobe twins, 8 MiB ring buffer, drop counter                             |
-| `src/`            | the daemon (`daemon.c`) and its libraries: event contract, payload contract, attach planner, reorder pipeline, index writer, RFC 5424 emitter, feature probe, health |
-| `rules/`          | alert rules as data — the evaluator is fixed; rules never change behavior by themselves                                                                             |
-| `systemd/`        | hardened unit (CAP_BPF + CAP_PERFMON, no CAP_SYS_ADMIN), starting the daemon with `--index-dir` and `--rules-dir`                                                    |
-| `rsyslog/`        | local-retention drop-in plus the queued-TLS forward template (`vigil-forward.conf.in`, installed only when a collector is configured)                                |
-| `tests/`          | host-runnable ctest suites + record/replay and hook-path fixtures (no kernel needed)                                                                                 |
+| Path              | Contents                                                                                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bpf/vigil.bpf.c` | the single CO-RE object: sched + module tracepoints, LSM file/network/privilege hooks with kprobe twins, 8 MiB ring buffer, drop counter                                                                                       |
+| `src/`            | the daemon (`daemon.c`) and its libraries: event contract, payload contract, attach planner, reorder pipeline, index writer, RFC 5424 emitter, feature probe, health                                                           |
+| `rules/`          | alert rules as data — the evaluator is fixed; rules never change behavior by themselves                                                                                                                                        |
+| `systemd/`        | hardened unit (CAP_BPF + CAP_PERFMON, no CAP_SYS_ADMIN), starting the daemon with `--index-dir` and `--rules-dir`                                                                                                              |
+| `rsyslog/`        | local-retention drop-in plus the queued-TLS forward template (`vigil-forward.conf.in`, installed only when a collector is configured)                                                                                          |
+| `tests/`          | host-runnable ctest suites + record/replay and hook-path fixtures (no kernel needed)                                                                                                                                           |
 | `scripts/`        | `gen_vmlinux.sh` (BTF → vmlinux.h), verifier/CI compile checks, `install.sh` / `uninstall.sh`, `check_packaging.sh` (host checks), `vm-lifecycle-check.sh` (VM lifecycle proof), `paths.sh` (the installed-path single source) |
 
 ## Build and test (host)
@@ -70,12 +70,12 @@ daemon refuses to run rather than half-observe.
 
 The full set, and where each is visible:
 
-| State    | Meaning                                                                     | Seen in                                                                       |
-| -------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Running  | all hooks attached, indexing and alerting                                    | `monitor.health` line with `"degraded":false`; index and VIGOP/VIGALERT flow  |
-| Degraded | some hook class unavailable (e.g. BPF LSM unattachable); kprobe fallbacks    | `monitor.health` line with `"degraded":true` naming the attached hook set     |
-| Dropping | ring buffer saturated under burst; accepted events stay ordered and complete | growing `droppedTotal`; a monitor-health alert at the drop threshold          |
-| Failed   | fatal error (e.g. no kernel BTF — the probe refuses to guess)                 | unit exits; `Restart=on-failure` retries every 5s; `journalctl -u vigil-kernel-monitor` |
+| State    | Meaning                                                                      | Seen in                                                                                 |
+| -------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Running  | all hooks attached, indexing and alerting                                    | `monitor.health` line with `"degraded":false`; index and VIGOP/VIGALERT flow            |
+| Degraded | some hook class unavailable (e.g. BPF LSM unattachable); kprobe fallbacks    | `monitor.health` line with `"degraded":true` naming the attached hook set               |
+| Dropping | ring buffer saturated under burst; accepted events stay ordered and complete | growing `droppedTotal`; a monitor-health alert at the drop threshold                    |
+| Failed   | fatal error (e.g. no kernel BTF — the probe refuses to guess)                | unit exits; `Restart=on-failure` retries every 5s; `journalctl -u vigil-kernel-monitor` |
 
 The unit is enabled for boot: a reboot brings the monitor back on its own,
 and `install.sh` waits for the first `monitor.health` line so an operator
