@@ -117,11 +117,22 @@ export const BrowserExtensionEvent = z.object({
   permissions: z.array(z.string()).optional(),
 });
 
-/** macOS's own security notices: XProtect hits, TCC permission changes, Gatekeeper overrides. */
+/**
+ * Security notices raised on this machine: macOS's own (XProtect hits, TCC
+ * permission changes, Gatekeeper overrides) and Vigil's own telemetry-relay
+ * notices (relay_revoked, relay_gap), which the app synthesizes so a revoked
+ * or gapped shipping run can alert through the same channel as everything else.
+ */
 export const SystemAlertEvent = z.object({
   ...base,
   kind: z.literal('system.alert'),
-  subtype: z.enum(['xprotect_detected', 'tcc_modified', 'gatekeeper_override']),
+  subtype: z.enum([
+    'xprotect_detected',
+    'tcc_modified',
+    'gatekeeper_override',
+    'relay_revoked',
+    'relay_gap',
+  ]),
   path: z.string().optional(),
   sha256: z.string().optional(),
   process: ProcessRef.optional(),

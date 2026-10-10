@@ -22,6 +22,7 @@ import {
 } from './agent-watch.js';
 import { macosCoreRules } from './macos-core.js';
 import { linuxCoreRules } from './linux-core.js';
+import { relayRules } from './relay.js';
 
 /**
  * Pre-flight rules: an agent's hook (Claude Code's PreToolUse) asks Vigil
@@ -333,15 +334,16 @@ export const agentPreflightRules: DetectionRuleInput[] = [
   }),
 ];
 
-/** Every rule Vigil ships: the macOS core pack, agent watch and pre-flight. */
+/** Every rule Vigil ships: the macOS core pack, agent watch, pre-flight and relay. */
 export const builtinRules: DetectionRuleInput[] = [
   ...macosCoreRules,
   ...agentWatchRules,
   ...agentPreflightRules,
+  ...relayRules,
 ];
 
 /** Every rule Vigil ships for one OS: its core pack, agent watch and pre-flight. */
 export function builtinRulesFor(platform: string = process.platform): DetectionRuleInput[] {
   if (platform !== 'linux') return builtinRules;
-  return [...linuxCoreRules, ...agentWatchRules, ...agentPreflightRules];
+  return [...linuxCoreRules, ...agentWatchRules, ...agentPreflightRules, ...relayRules];
 }

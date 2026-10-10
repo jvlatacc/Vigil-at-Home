@@ -1,0 +1,20 @@
+{
+  "name": "@vigil/shipper",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ships Vigil's stored telemetry, redacted and batched, to the telemetry relay",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@vigil/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@vigil/ai": "workspace:*"
+  }
+}
