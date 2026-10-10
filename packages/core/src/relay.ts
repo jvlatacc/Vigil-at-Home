@@ -5,9 +5,12 @@ import {
   AgentToolRequestEvent,
   BrowserExtensionEvent,
   FileEvent,
+  KernelModuleEvent,
+  MonitorHealthEvent,
   NetworkConnectionEvent,
   NetworkListenEvent,
   PersistenceEvent,
+  PrivilegeChangeEvent,
   ProcessExecEvent,
   ProcessExitEvent,
   SantaDecisionEvent,
@@ -43,6 +46,9 @@ export const EventBody = z.discriminatedUnion('kind', [
   BrowserExtensionEvent.omit({ raw: true }),
   SystemAlertEvent.omit({ raw: true }),
   AgentToolRequestEvent.omit({ raw: true }),
+  PrivilegeChangeEvent.omit({ raw: true }),
+  KernelModuleEvent.omit({ raw: true }),
+  MonitorHealthEvent.omit({ raw: true }),
 ]);
 export type EventBody = z.infer<typeof EventBody>;
 
