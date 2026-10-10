@@ -164,6 +164,11 @@ ss -lun | grep -E ':2550(\s|$)'
 
 echo "== assert: the env file was applied to the service process =="
 sudo cat "/proc/$pid/environ" | tr '\0' '\n' | grep -qx "VIGIL_S3_BUCKET=$VIGIL_SMOKE_BUCKET"
+
+echo "== assert: the build-boot builder account is gone =="
+# The image must not carry build-boot accounts; harden.sh defers their
+# deletion to this first boot, so their absence is asserted here.
+! id builder >/dev/null 2>&1
 GUEST
 guest_rc=$?
 set -e

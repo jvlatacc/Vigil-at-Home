@@ -5,12 +5,33 @@
 
 set -euo pipefail
 
-# 1. Remove the throwaway builder user; its authorized_keys go with the
-#    home directory. No build-boot credential survives in the image.
-if getent passwd builder >/dev/null; then
-  userdel --remove builder
-fi
+# 1. Strip the throwaway builder account's credentials now, and arrange its
+#    deletion at the next boot. It cannot be deleted here: the provisioners
+#    connect as builder, and userdel refuses while any process still holds
+#    the uid ("user is currently used by process" — our own sshd session).
+#    What must never survive is the credential: the per-build key goes with
+#    the home directory now, the sudoers rule goes now, and the keyless,
+#    password-locked account itself is removed at first boot, when no
+#    session can hold it.
 rm -rf /home/builder
+sudoers=/etc/sudoers.d/90-cloud-init-users
+if [[ -f $sudoers ]] && grep -q '^builder\b' "$sudoers"; then
+  sed -i '/^builder\b/d' "$sudoers"
+  [[ -s $sudoers ]] || rm -f "$sudoers"
+fi
+mkdir -p /var/lib/cloud/scripts/per-boot
+cat > /var/lib/cloud/scripts/per-boot/00-remove-builder.sh <<'PERBOOT'
+#!/bin/sh
+# Left over from the image build: the throwaway builder account could not be
+# deleted during provisioning (its own SSH session held the uid), so the
+# deletion runs at this boot, when nothing holds it. No-op on later boots.
+if getent passwd builder >/dev/null; then
+    pkill -KILL -u builder 2>/dev/null || true
+    userdel --remove builder
+    rm -rf /home/builder
+fi
+PERBOOT
+chmod 0755 /var/lib/cloud/scripts/per-boot/00-remove-builder.sh
 
 # 2. SSH: no root login, no password authentication (keys only).
 cat > /etc/ssh/sshd_config.d/60-vigil-hardening.conf <<'SSHD'
