@@ -79,7 +79,8 @@ The DMG, the .deb and the AppImage bundle these, each under its own license:
 
 The appliance collector (`apps/appliance/`) is built and shipped separately from the
 desktop app (see `docs/appliance.md` when it lands). Its image bundles
-[zod](https://github.com/colinhacks/zod), used under the MIT License.
+[zod](https://github.com/colinhacks/zod) and
+[aws4fetch](https://github.com/mhart/aws4fetch), each used under the MIT License.
 
 ## Installed separately, not shipped
 
