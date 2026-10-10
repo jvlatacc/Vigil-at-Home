@@ -9,6 +9,7 @@ import {
   PREFLIGHT_SOCKET_RULE_ID,
   PREFLIGHT_SOCKET_TOOL,
 } from '../packs/agent-preflight.js';
+import { relayRules } from '../packs/relay.js';
 import {
   AGENT_CONFIG_RE,
   agentWatchRules,
@@ -550,9 +551,11 @@ describe('agent rule packs', () => {
     }
   });
 
-  it('ships all three packs as the built-in rules, each rule once', () => {
+  it('ships all four packs as the built-in rules, each rule once', () => {
     expect(builtinRules.map((r) => r.id)).toEqual(
-      [...macosCoreRules, ...agentWatchRules, ...agentPreflightRules].map((r) => r.id),
+      [...macosCoreRules, ...agentWatchRules, ...agentPreflightRules, ...relayRules].map(
+        (r) => r.id,
+      ),
     );
     expect(new Set(builtinRules.map((r) => r.id)).size).toBe(builtinRules.length);
     expect(engine().allRules()).toHaveLength(builtinRules.length);

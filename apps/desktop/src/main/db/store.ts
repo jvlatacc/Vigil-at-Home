@@ -19,6 +19,7 @@ import {
   type EventQuery,
   type EventStats,
   type EventView,
+  type RelayCursor,
 } from '../../shared/ipc.js';
 import { isNoticed, needsDecision } from '../../shared/attention.js';
 import { pileKey, untouched } from '../../shared/piles.js';
@@ -1283,6 +1284,69 @@ export class Store {
     ).run(key, JSON.stringify(value));
   }
 
+  // ----------------------------------------------------- relay shipper reads
+
+  /**
+   * Keyset reads for the telemetry shipper (apps/desktop/src/main/relay): every
+   * row strictly after (ts, id), oldest first. Bodies are the stored forms —
+   * events already slimmed (no raw), alerts and actions as stored — and the
+   * shipper redacts again before sending.
+   */
+
+  relayEventsSince(cursor: RelayCursor, limit: number): RelayEventRow[] {
+    return this.events(
+      'SELECT body, args FROM events WHERE ts > ? OR (ts = ? AND id > ?) ORDER BY ts, id LIMIT ?',
+      cursor.ts,
+      cursor.ts,
+      cursor.id,
+      limit,
+    ).map((e) => eventRecord(e));
+  }
+
+  relayAlertsSince(cursor: RelayCursor, limit: number): RelayAlertRow[] {
+    return this.all(
+      Alert,
+      'SELECT body FROM alerts WHERE updated_at > ? OR (updated_at = ? AND id > ?) ORDER BY updated_at, id LIMIT ?',
+      cursor.ts,
+      cursor.ts,
+      cursor.id,
+      limit,
+    ).map((a) => ({ id: a.id, ts: a.updatedAt, body: a }));
+  }
+
+  relayActionsSince(cursor: RelayCursor, limit: number): RelayActionRow[] {
+    return this.all(
+      ActionRecord,
+      'SELECT body FROM actions WHERE requested_at > ? OR (requested_at = ? AND id > ?) ORDER BY requested_at, id LIMIT ?',
+      cursor.ts,
+      cursor.ts,
+      cursor.id,
+      limit,
+    ).map((a) => ({ id: a.id, ts: a.requestedAt, body: a }));
+  }
+
+  /**
+   * A full rules snapshot when the rules changed since `known` (null: never
+   * sent), keyed by a token of the rules table; undefined when unchanged.
+   */
+  relayRulesIfChanged(known: number | null): { version: number; rules: Rule[] } | undefined {
+    const row = this.stmt('SELECT COUNT(*) AS n, MAX(updated_at) AS m FROM rules').get() as {
+      n: number;
+      m: number | null;
+    };
+    // A token that moves on any rule save, add or delete, and fits a float.
+    const version = Number(row.m ?? 0) * 10_000 + Number(row.n);
+    if (known === version) return undefined;
+    return { version, rules: this.listRules() };
+  }
+
+  /** The oldest event still retained, for the shipper's pruning-gap check. */
+  relayOldestEvent(): RelayCursor | null {
+    const row = this.stmt('SELECT id, ts FROM events ORDER BY ts, id LIMIT 1').get() as
+      { id: string; ts: number } | undefined;
+    return row ? { ts: Number(row.ts), id: row.id } : null;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -1296,4 +1360,32 @@ const ARG_LOOKUPS_BEFORE_SCAN = 2_000;
 /** Text as SQLite's LIKE compares it: ASCII letters fold case, nothing else does. */
 function likeFold(text: string): string {
   return text.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
+// ---------------------------------------------------------------- relay rows
+
+/** An event as the telemetry shipper sends it: the stored body, without raw. */
+export interface RelayEventRow {
+  id: string;
+  ts: number;
+  body: SensorEvent;
+}
+
+/** An alert as stored. */
+export interface RelayAlertRow {
+  id: string;
+  ts: number;
+  body: Alert;
+}
+
+/** A response action as stored. */
+export interface RelayActionRow {
+  id: string;
+  ts: number;
+  body: ActionRecord;
+}
+
+function eventRecord(e: SensorEvent): RelayEventRow {
+  const { raw: _raw, ...body } = e;
+  return { id: e.id, ts: e.ts, body };
 }

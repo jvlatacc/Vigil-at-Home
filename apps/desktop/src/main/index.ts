@@ -23,6 +23,8 @@ import { registerIpc } from './ipc.js';
 import { systemProbe } from './onboarding/checks.js';
 import { demoProbe } from './onboarding/demo.js';
 import { FeedKeyStore, KeyStore, type Cipher } from './onboarding/keys.js';
+import { RelayTokenStore } from './relay/secrets.js';
+import { RelayService } from './relay/service.js';
 import { linuxDistro, type LinuxDistro } from './onboarding/plan.js';
 import { OnboardingService } from './onboarding/service.js';
 import { Connectors, ConnectorRecord } from './pack/connectors.js';
@@ -353,12 +355,33 @@ function start(): void {
     seedPackDemo(pack, connectors, join(app.getAppPath(), 'src/main/pack/fixtures/demo-mcp.mjs'));
   app.on('before-quit', () => void connectors.closeAll());
 
-  registerIpc(core, windows, setup, ai, updates, agents, { service: pack, connectors }, feedKeys, {
-    install: installHelper,
-    uninstall: unlessDemo(demo, async () =>
-      afterHelperScript(await runHelperScript('uninstall', helperDir())),
-    ),
+  const relayTokens = new RelayTokenStore(join(dataDir, 'relay-token.json'), cipher);
+  const relay = new RelayService({
+    store,
+    alerts: core.alerts,
+    getDetector: () => core.detector,
+    tokens: relayTokens,
+    log: (msg) => console.error('[relay]', msg),
   });
+  relay.start();
+
+  registerIpc(
+    core,
+    windows,
+    setup,
+    ai,
+    updates,
+    agents,
+    { service: pack, connectors },
+    feedKeys,
+    relay,
+    {
+      install: installHelper,
+      uninstall: unlessDemo(demo, async () =>
+        afterHelperScript(await runHelperScript('uninstall', helperDir())),
+      ),
+    },
+  );
   windows.createTray();
   windows.applyTheme(core.theme(), core.appearance());
   // After start-up settles, so the menu-bar item appears first.
@@ -372,6 +395,7 @@ function start(): void {
   core.sensors.on('changed', refresh);
   setup.on('changed', () => windows.broadcast('changed'));
   agents.on('changed', () => windows.broadcast('changed'));
+  relay.on('changed', () => windows.broadcast('changed'));
   agents.on('activity', () => windows.broadcast('agents'));
   core.alerts.on('popup', (alert) => windows.showPopup(alert.id));
   core.feed.on('events', (n) => windows.broadcast('events', n));
@@ -456,6 +480,7 @@ function start(): void {
   // Keep running in the menu bar when windows close.
   app.on('window-all-closed', () => {});
   app.on('before-quit', () => {
+    relay.stop();
     helper.stop();
     void agents.stop();
     core.stop();
