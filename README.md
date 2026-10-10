@@ -83,7 +83,7 @@ Maintainers: run the **Release** workflow by hand with a version (like `0.1.0-al
 
 - **Deterministic inline, AI after.** LLMs have a high false-positive rate, so they never decide what gets blocked. Rules do. The AI explains alerts and drafts new rules from traffic it has analysed; drafted rules start in shadow mode, where they only log matches, and you promote them once their track record looks right.
 - **Only you release.** Rules can contain, never release. The AI can only propose actions, and never proposes allowing something.
-- **Local.** Everything lives in a SQLite database on your computer. No Docker, no server, no cloud account.
+- **Local.** Everything lives in a SQLite database on your computer. No Docker, no server, no cloud account. The optional [appliance](docs/appliance.md) — a forwarder you host — is the one self-hosted component.
 
 ### How well it works
 
