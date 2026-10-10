@@ -1,0 +1,58 @@
+name: Appliance
+
+# Validates the appliance image sources (apps/appliance) — Packer template
+# formatting and validity, ShellCheck over the build and provisioning
+# scripts. It deliberately never builds or boots the VM image: a full build
+# boots Debian under QEMU, which on hosted runners means TCG software
+# emulation and tens of minutes, so the real build and its boot smoke run at
+# release time only (the appliance job in release.yml).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/appliance/**
+      - .github/workflows/appliance.yml
+  pull_request:
+    paths:
+      - apps/appliance/**
+      - .github/workflows/appliance.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appliance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
+        with:
+          version: '1.16.1'
+
+      - name: Check Packer formatting
+        run: packer fmt -check -recursive apps/appliance/packer
+
+      # Validation needs the pinned QEMU plugin initialized first; this
+      # downloads it from the registry, so network is expected here.
+      - name: Initialize Packer plugins
+        run: packer init apps/appliance/packer
+
+      - name: Validate the image template
+        run: packer validate apps/appliance/packer
+
+      - name: ShellCheck the appliance scripts
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q shellcheck
+          fi
+          shellcheck apps/appliance/scripts/*.sh apps/appliance/packer/provision/*.sh
