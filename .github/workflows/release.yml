@@ -23,6 +23,12 @@ name: Release
 # stays fail-open (logged). test_sign signs with the committed dogfood key
 # instead — pipeline proof only, never a real release.
 
+#
+# The appliance VM image (apps/appliance) is built and boot-smoked by the
+# appliance job on the same dispatch — never on pull requests, which get
+# validation only in appliance.yml — and attaches the qcow2 to the same
+# draft release, with its line in the (optionally signed) SHA256SUMS.txt.
+
 on:
   workflow_dispatch:
     inputs:
@@ -231,8 +237,75 @@ jobs:
             apps/desktop/dist/*.deb
             apps/desktop/dist/*.AppImage
 
+  appliance:
+    # Builds the appliance VM image (Packer/QEMU, KVM autodetected, TCG
+    # fallback) and boot-smokes it before the release can attach it. Without
+    # KVM a full build boots Debian under software emulation and takes tens
+    # of minutes, hence the generous timeout. Pull requests never get here:
+    # they get validation only (appliance.yml).
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Pick the release version
+        id: version
+        env:
+          INPUT: ${{ inputs.version }}
+        # Same format check as the mac and linux jobs, so a malformed version
+        # fails the image build before any packaging happens.
+        run: |
+          v="${INPUT#v}"
+          if [[ -n "$v" && ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Not a version: $v" >&2; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install QEMU and cloud-image tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-system-x86 cloud-image-utils
+
+      # The Debian cloud image is ~350 MB and Packer caches it by URL; keep
+      # it across runs. Keyed on the template (the checksum pin lives there)
+      # with no restore fallback, so a bumped base-image pin can never be
+      # served from a stale cache.
+      - name: Restore the base image cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .packer-cache
+          key: appliance-debian-cloud-image-${{ hashFiles('apps/appliance/packer/appliance.pkr.hcl') }}
+
+      - name: Build the image
+        env:
+          PACKER_CACHE_DIR: ${{ github.workspace }}/.packer-cache
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ -n "$VERSION" ]]; then
+            apps/appliance/scripts/build.sh "$VERSION"
+          else
+            apps/appliance/scripts/build.sh
+          fi
+
+      - name: Boot smoke the built image
+        run: |
+          img=$(find apps/appliance/packer/output -maxdepth 1 -name 'vigil-appliance-*.qcow2' -print -quit)
+          test -n "$img" || { echo "No image was produced"; exit 1; }
+          apps/appliance/scripts/boot-smoke.sh "$img"
+
+      # Even on a failed smoke, keep the image for debugging; the release job
+      # (which attaches it) still needs this job to succeed.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: vigil-at-home-appliance
+          path: apps/appliance/packer/output/*.qcow2
+
   release:
-    needs: [mac, linux]
+    needs: [mac, linux, appliance]
     # Only a hand-started run can draft a release; a pull request's build can
     # never reach this job, whatever its steps print.
     if: github.event_name == 'workflow_dispatch' && needs.mac.outputs.version != ''
@@ -260,6 +333,7 @@ jobs:
             dist/*.zip
             dist/*.deb
             dist/*.AppImage
+            dist/*.qcow2
       # REL-01: sign the checksums when the signing key is available, so the
       # app can verify a release before offering it.
       - name: Checksum and sign the artifacts
@@ -267,7 +341,7 @@ jobs:
           VIGIL_RELEASE_SIGNING_KEY: ${{ secrets.VIGIL_RELEASE_SIGNING_KEY }}
           TEST_SIGN: ${{ inputs.test_sign }}
         run: |
-          (cd dist && sha256sum *.dmg *.zip *.deb *.AppImage > SHA256SUMS.txt)
+          (cd dist && sha256sum *.dmg *.zip *.deb *.AppImage *.qcow2 > SHA256SUMS.txt)
           cat dist/SHA256SUMS.txt
           key=""
           if [[ -n "$VIGIL_RELEASE_SIGNING_KEY" ]]; then
@@ -300,6 +374,6 @@ jobs:
           # Sums (and their .minisig, when signed) were made by the previous step.
           flags=(--draft --target "$GITHUB_SHA" --title "Vigil at Home $VERSION" --notes-file .github/release-notes.md)
           [[ "$VERSION" == *-* ]] && flags+=(--prerelease)
-          assets=(dist/*.dmg dist/*.zip dist/*.deb dist/*.AppImage dist/SHA256SUMS.txt)
+          assets=(dist/*.dmg dist/*.zip dist/*.deb dist/*.AppImage dist/*.qcow2 dist/SHA256SUMS.txt)
           [[ -f dist/SHA256SUMS.txt.minisig ]] && assets+=(dist/SHA256SUMS.txt.minisig)
           gh release create "v$VERSION" "${flags[@]}" "${assets[@]}"
